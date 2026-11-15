@@ -1,0 +1,13 @@
+# Local only — not part of the published site
+logs/
+screenshots/
+*.zip
+
+# Early logo explorations not referenced by the pages
+assets/logo-aoi.svg
+assets/logo-aoi.png
+assets/logo-ao-intelligence.svg
+assets/logo-clean-*
+assets/logo-concept-*
+assets/logo-preview.png
+assets/logo-concepts-preview.png

@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Your business dashboard: demo sales, money in, and a daily overview, managed by your AI agent.">
+  <title>AO Intelligence — Business</title>
+  <link rel="icon" href="assets/favicon-ao.svg" type="image/svg+xml">
+  <link rel="icon" href="assets/favicon-ao.png" type="image/png" sizes="256x256">
+  <meta name="theme-color" content="#1b5f56">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="AO Intelligence">
+  <link rel="apple-touch-icon" href="assets/apple-touch-icon.png">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="stylesheet" href="css/styles.css">
+  <script defer src="js/brand.js"></script>
+  <script defer src="js/business-data.js"></script>
+  <script defer src="js/connectors.js"></script>
+  <script defer src="js/business.js"></script>
+  <script defer src="js/pwa.js"></script>
+</head>
+<body class="dashboard business-page">
+  <span data-brand-title="Business" hidden></span>
+  <a class="skip-link" href="#main">Skip to content</a>
+
+  <header class="site-header dash-header" id="top">
+    <div class="wrap header-inner">
+      <a class="brand-lockup" href="index.html">
+        <picture>
+          <source srcset="assets/logo-ao.svg" type="image/svg+xml">
+          <img class="brand-mark" src="assets/logo-ao.png" alt="AO Intelligence" width="168" height="36">
+        </picture>
+      </a>
+
+      <div class="dash-header-right">
+        <span class="demo-badge" id="demo-badge">Demo data</span>
+        <div class="business-switcher">
+          <label for="business-select">Business</label>
+          <select id="business-select" name="business"></select>
+        </div>
+        <div class="dash-header-actions">
+          <a class="btn btn-ghost btn-small" href="dashboard.html">Overview</a>
+          <button class="btn btn-ghost btn-small" type="button" data-install-app hidden>Install app</button>
+          <a class="btn btn-secondary btn-small" href="index.html">Back to site</a>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <main id="main" class="dash-main">
+    <div class="wrap">
+      <section class="agent-banner" aria-labelledby="agent-name">
+        <div>
+          <h1 id="agent-name">Business assistant</h1>
+          <div class="agent-meta">
+            <span class="status-pill" id="agent-status">Active</span>
+            <span id="agent-managed">Managed by your AI agent</span>
+            <span id="agent-since"></span>
+          </div>
+        </div>
+        <p class="muted" id="business-type"></p>
+      </section>
+
+      <nav class="dash-subnav" aria-label="Dashboards">
+        <a href="dashboard.html">Overview</a>
+        <a href="business.html" aria-current="page">Business</a>
+      </nav>
+
+      <section id="services" aria-labelledby="services-title">
+        <div class="panel-head">
+          <h2 class="panel-title" id="services-title">Connected services</h2>
+          <span class="muted">Demo connections only</span>
+        </div>
+        <p class="overview-intro">Shopify and NatWest are shown as connected for this preview, with sample figures. The other services are examples of what you could link later. Nothing here is a live account.</p>
+        <div class="service-grid" id="services-grid"></div>
+      </section>
+
+      <section id="kpis" aria-labelledby="kpis-title">
+        <div class="panel-head">
+          <h2 class="panel-title" id="kpis-title">Today at a glance</h2>
+          <span class="muted" id="kpi-date">Compared with yesterday</span>
+        </div>
+        <div class="kpi-grid" id="kpi-grid"></div>
+      </section>
+
+      <section class="dash-card overview-ai" id="daily-overview" aria-labelledby="overview-title">
+        <div class="panel-head">
+          <h2 class="panel-title" id="overview-title">Daily overview by your AI agent</h2>
+          <span class="muted" id="overview-date">Today</span>
+        </div>
+        <p class="overview-body" id="overview-body">Loading today’s demo overview…</p>
+        <h3 class="suggestions-title">Suggested improvements</h3>
+        <ol class="suggestion-list" id="overview-suggestions"></ol>
+      </section>
+
+      <section class="dash-card" id="revenue" aria-labelledby="revenue-title">
+        <div class="panel-head">
+          <h2 class="panel-title" id="revenue-title">Daily revenue</h2>
+          <span class="muted">Last 30 days · demo figures</span>
+        </div>
+        <ul class="chart-legend" aria-hidden="true">
+          <li><span class="swatch swatch-sales"></span> Shopify sales</li>
+          <li><span class="swatch swatch-bank"></span> Bank money in</li>
+        </ul>
+        <div class="chart-wrap" id="revenue-chart"></div>
+        <p class="chart-caption muted" id="chart-caption"></p>
+      </section>
+
+      <section class="dash-card" id="recent-activity" aria-labelledby="activity-title">
+        <div class="panel-head">
+          <h2 class="panel-title" id="activity-title">Recent orders and transactions</h2>
+        </div>
+        <div class="table-wrap">
+          <table class="data-table">
+            <caption class="visually-hidden">Sample of the latest demo Shopify orders and NatWest transactions</caption>
+            <thead>
+              <tr>
+                <th scope="col">When</th>
+                <th scope="col">Details</th>
+                <th scope="col">Source</th>
+                <th scope="col" class="table-amount">Amount</th>
+              </tr>
+            </thead>
+            <tbody id="activity-table-body">
+              <tr><td colspan="4">Loading demo figures…</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="muted table-note" id="activity-table-note"></p>
+      </section>
+    </div>
+  </main>
+
+  <div class="modal-backdrop" id="connect-modal" role="presentation">
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="connect-modal-title" tabindex="-1">
+      <h2 id="connect-modal-title">Connect a service</h2>
+      <p id="connect-modal-body">This is a preview, so no real account is connected and no sign-in takes place.</p>
+      <div class="modal-actions">
+        <button class="btn btn-secondary" type="button" data-modal-close>Not now</button>
+        <button class="btn btn-primary" type="button" id="connect-modal-confirm">Continue</button>
+      </div>
+    </div>
+  </div>
+
+  <footer class="site-footer">
+    <div class="wrap footer-inner">
+      <p>© <span data-year>2026</span> <span data-brand>AO Intelligence</span>. Sample business dashboard with demo data.</p>
+      <p>
+        <a href="dashboard.html">Inbox overview</a>
+        <a href="index.html">Marketing site</a>
+      </p>
+    </div>
+  </footer>
+</body>
+</html>

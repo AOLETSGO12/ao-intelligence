@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Your business dashboard: a daily overview of linked inboxes, managed by your AI agent.">
+  <title>AO Intelligence — Dashboard</title>
+  <link rel="icon" href="assets/favicon-ao.svg" type="image/svg+xml">
+  <link rel="icon" href="assets/favicon-ao.png" type="image/png" sizes="256x256">
+  <meta name="theme-color" content="#1b5f56">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="AO Intelligence">
+  <link rel="apple-touch-icon" href="assets/apple-touch-icon.png">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="stylesheet" href="css/styles.css">
+  <script defer src="js/brand.js"></script>
+  <script defer src="js/data.js"></script>
+  <script defer src="js/dashboard.js"></script>
+  <script defer src="js/pwa.js"></script>
+</head>
+<body class="dashboard">
+  <span data-brand-title="Dashboard" hidden></span>
+  <a class="skip-link" href="#main">Skip to content</a>
+
+  <header class="site-header dash-header" id="top">
+    <div class="wrap header-inner">
+      <a class="brand-lockup" href="index.html">
+        <picture>
+          <source srcset="assets/logo-ao.svg" type="image/svg+xml">
+          <img class="brand-mark" src="assets/logo-ao.png" alt="AO Intelligence" width="168" height="36">
+        </picture>
+      </a>
+
+      <div class="dash-header-right">
+        <span class="demo-badge" id="demo-badge">Demo data</span>
+        <div class="business-switcher">
+          <label for="business-select">Business</label>
+          <select id="business-select" name="business"></select>
+        </div>
+        <div class="dash-header-actions">
+          <a class="btn btn-ghost btn-small" href="business.html">Business</a>
+          <a class="btn btn-ghost btn-small" href="#settings">Settings</a>
+          <button class="btn btn-ghost btn-small" type="button" data-install-app hidden>Install app</button>
+          <a class="btn btn-secondary btn-small" href="index.html">Back to site</a>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <main id="main" class="dash-main">
+    <div class="wrap">
+      <section class="agent-banner" aria-labelledby="agent-name">
+        <div>
+          <h1 id="agent-name">Business assistant</h1>
+          <div class="agent-meta">
+            <span class="status-pill" id="agent-status">Active</span>
+            <span id="agent-managed">Managed by your AI agent</span>
+            <span id="agent-since"></span>
+          </div>
+        </div>
+        <p class="muted" id="business-type"></p>
+      </section>
+
+      <nav class="dash-subnav" aria-label="Dashboards">
+        <a href="dashboard.html" aria-current="page">Overview</a>
+        <a href="business.html">Business</a>
+      </nav>
+
+      <section id="overview" aria-labelledby="overview-title">
+        <div class="panel-head">
+          <h2 class="panel-title" id="overview-title">Daily overview</h2>
+          <span class="muted" id="overview-date">Today</span>
+        </div>
+        <p class="overview-intro" id="overview-intro"></p>
+        <div class="overview-grid" id="overview-grid"></div>
+      </section>
+
+      <div class="dash-columns">
+        <section class="dash-card" id="emails" aria-labelledby="emails-title">
+          <div class="panel-head">
+            <h2 class="panel-title" id="emails-title">Linked email accounts</h2>
+          </div>
+          <ul class="email-list" id="email-list"></ul>
+          <div class="link-actions">
+            <button class="btn btn-secondary btn-small" type="button" data-link-provider="Gmail">Link Gmail</button>
+            <button class="btn btn-secondary btn-small" type="button" data-link-provider="Outlook">Link Outlook</button>
+          </div>
+        </section>
+
+        <section class="dash-card" id="activity" aria-labelledby="activity-title">
+          <div class="panel-head">
+            <h2 class="panel-title" id="activity-title">Recent agent activity</h2>
+          </div>
+          <ol class="activity-list" id="activity-list"></ol>
+        </section>
+      </div>
+
+      <section class="dash-card" id="settings" aria-labelledby="settings-title">
+        <div class="panel-head">
+          <h2 class="panel-title" id="settings-title">Settings</h2>
+        </div>
+        <form class="settings-grid" id="settings-form" action="#" method="post">
+          <div>
+            <label for="digest-time">Daily overview time</label>
+            <input id="digest-time" name="digestTime" type="time">
+          </div>
+          <div>
+            <label for="digest-address">Send the overview to</label>
+            <input id="digest-address" name="digestAddress" type="email" autocomplete="email">
+          </div>
+          <div class="checkbox-row">
+            <input id="notify-replies" name="notifyReplies" type="checkbox">
+            <label for="notify-replies">Tell me when something needs a reply</label>
+          </div>
+          <div class="checkbox-row">
+            <input id="notify-invoices" name="notifyInvoices" type="checkbox">
+            <label for="notify-invoices">Tell me about invoices and payments</label>
+          </div>
+          <div class="checkbox-row">
+            <input id="notify-bookings" name="notifyBookings" type="checkbox">
+            <label for="notify-bookings">Tell me about booking changes</label>
+          </div>
+          <p class="settings-note">These controls are part of the prototype and are not saved to a server. In a live service, changes would apply to this business’s agent only.</p>
+          <div>
+            <button class="btn btn-primary btn-small" type="submit">Save settings</button>
+          </div>
+        </form>
+        <p class="form-success" id="settings-success" role="status" tabindex="-1" style="margin-top: 1rem;">Settings updated for this preview. They will reset if you refresh the page.</p>
+      </section>
+    </div>
+  </main>
+
+  <div class="modal-backdrop" id="link-modal" role="presentation">
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="link-modal-title" tabindex="-1">
+      <h2 id="link-modal-title">Link an email account</h2>
+      <p id="link-modal-body">This is a preview, so no real account is connected. In the finished service you would be asked to confirm access, then the inbox would appear in the list.</p>
+      <div class="modal-actions">
+        <button class="btn btn-secondary" type="button" data-modal-close>Not now</button>
+        <button class="btn btn-primary" type="button" id="link-modal-confirm">Continue</button>
+      </div>
+    </div>
+  </div>
+
+  <footer class="site-footer">
+    <div class="wrap footer-inner">
+      <p>© <span data-year>2026</span> <span data-brand>AO Intelligence</span>. Sample dashboard with demo data.</p>
+      <p>
+        <a href="business.html">Business dashboard</a>
+        <a href="index.html">Marketing site</a>
+      </p>
+    </div>
+  </footer>
+</body>
+</html>
