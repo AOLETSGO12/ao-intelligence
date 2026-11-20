@@ -237,6 +237,7 @@ export function createHandler({ fetchImpl = fetch, openImap = (host) => connectT
     try { return await route(request, env); }
     catch (e) {
       if (e instanceof HttpError) return json(env, request, { error: e.message, code: e.code }, e.status);
+      try { console.error("unhandled", e && e.stack || e); } catch (x) { /* ignore */ }
       return json(env, request, { error: "Something went wrong on our side. Nothing was changed." }, 500);
     }
   };

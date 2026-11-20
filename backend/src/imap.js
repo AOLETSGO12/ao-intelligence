@@ -10,12 +10,18 @@ const td1 = new TextDecoder("latin1");
 
 export async function connectTls(host, port = 993) {
   const { connect } = await import("cloudflare:sockets");
-  const s = connect({ hostname: host, port }, { secureTransport: "on", allowHalfOpen: false });
+  let s;
+  try {
+    s = connect({ hostname: host, port }, { secureTransport: "on", allowHalfOpen: false });
+    await s.opened;
+  } catch (e) {
+    throw new HttpError(502, "We couldn’t open a secure connection to " + host + ". Check the server name (it must support SSL on port 993).", "unreachable");
+  }
   const reader = s.readable.getReader();
   const writer = s.writable.getWriter();
   return {
-    read: async () => { const { value, done } = await reader.read(); return done ? null : value; },
-    write: (u8) => writer.write(u8),
+    read: async () => { try { const { value, done } = await reader.read(); return done ? null : value; } catch (e) { throw new HttpError(502, "The connection to the mail server dropped.", "unreachable"); } },
+    write: (u8) => writer.write(u8).catch(() => { throw new HttpError(502, "The connection to the mail server dropped.", "unreachable"); }),
     close: () => { try { s.close(); } catch (e) { /* ignore */ } },
   };
 }

@@ -2,7 +2,23 @@
 
 A white-label “managed AI agent” service for small businesses, as a static website you can host free on GitHub Pages. A public copy is hosted at [https://aoletsgo12.github.io/ao-intelligence/](https://aoletsgo12.github.io/ao-intelligence/).
 
-**It is built to be a real product.** Each connection (Gmail, Outlook, calendars, other email, bank, Stripe, Shopify, …) has a real integration behind it. Each one goes **live** as soon as its credential is added (see [Going live](#going-live-step-by-step)). Until then, that connection uses a clearly-labelled **sample data** fallback, so the site never breaks. Right now no credentials are configured, so everything on the hosted copy shows sample data. The legacy marketing/demo pages (`dashboard.html`, `business.html`) are always demo data.
+**It is a working app, not a demo.** `app.html` / `start.html` start empty and show only what you connect or type in. There is no sample data, and no fake numbers. If a source isn't connected, the screen says so. (Add `?demo=1` to the URL for the old sample-data tour, and `?demo=0` to go back.)
+
+### What works today
+
+| Area | How you connect it | Needs the backend? |
+| --- | --- | --- |
+| Email (Gmail, iCloud, Yahoo, AOL, Zoho, Fastmail, any IMAP) | Create an **app password** with the in-app steps, e.g. https://myaccount.google.com/apppasswords for Gmail. Mail is read-only. | Yes |
+| Outlook.com / Hotmail / Microsoft 365 mail | Microsoft removed password and app-password IMAP, so use **Sign in with Microsoft** (needs `microsoft.clientId` in `js/config.js`), or forward Outlook to Gmail/iCloud and connect that. | Sign-in: no. Forwarding route: yes. |
+| Calendar | A private **.ics link** (Google "secret address in iCal format", Outlook "publish calendar" ICS, iCloud public link), CalDAV, Calendly, or an uploaded `.ics` file. | Links: yes. Uploaded file: no. |
+| Money | Upload a bank **CSV or OFX statement**. It is parsed in your browser and kept on the device. A **Stripe restricted key** (`rk_…`, read-only) is also supported. | CSV/OFX: no. Stripe: yes. |
+| Tasks and targets | Add, edit and tick off your own. Suggestions come from real emails and events. | No |
+
+Open Banking stays "coming soon" until TrueLayer is set up. Nothing is faked in its place.
+
+The Expo/Snack copy in `ao-intelligence-app` is unchanged and still uses sample data.
+
+**Deploying the backend** is one command (see [backend/README.md](backend/README.md)): `CLOUDFLARE_API_TOKEN=… CLOUDFLARE_ACCOUNT_ID=… backend/deploy.sh`.
 
 ## Live site
 
