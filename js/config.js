@@ -19,7 +19,7 @@ window.AO_CONFIG = {
   // Address of the deployed backend (Cloudflare Worker) that handles anything needing a secret or a server:
   // other email (IMAP), bank connections (Open Banking), Stripe, Shopify, CalDAV / .ics, Calendly.
   // e.g. "https://ao-intelligence-api.your-name.workers.dev" (no trailing slash).
-  backendUrl: "",
+  backendUrl: "https://ao-intelligence-api.ao-446557ec.workers.dev",
 
   // Optional: a URL that writes reply drafts (POST {from, subject, snippet, business, owner} -> {drafts:[{label, body}]}).
   // Leave empty to use simple built-in templates. If the backend has drafting switched on it is used automatically.
