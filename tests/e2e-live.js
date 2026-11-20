@@ -42,6 +42,7 @@ async function open(browser, { config, state, mocks, base }) {
     try {
       if (!sessionStorage.getItem("__seeded")) {
         sessionStorage.setItem("__seeded", "1");
+        localStorage.setItem("ao-mode", "demo");
         if (config) localStorage.setItem("ao-config-override", JSON.stringify(config));
         if (state) localStorage.setItem("ao-intelligence-journey-v2", state);
       }
@@ -54,7 +55,8 @@ async function open(browser, { config, state, mocks, base }) {
 }
 const text = (page) => page.evaluate(() => document.body.innerText);
 async function clickText(page, sel, label, opts = {}) {
-  await page.waitForFunction((sel, label) => [...document.querySelectorAll(sel)].some((e) => e.textContent.trim().includes(label) && !e.disabled), { timeout: 8000 }, sel, label);
+  try { await page.waitForFunction((sel, label) => [...document.querySelectorAll(sel)].some((e) => e.textContent.trim().includes(label) && !e.disabled), { timeout: 8000 }, sel, label); }
+  catch (e) { console.log("    [debug] waiting for " + sel + " / " + label + "; page says: " + (await page.evaluate(() => document.body.innerText)).replace(/\s+/g, " ").slice(0, 300)); throw e; }
   await page.evaluate((sel, label) => { [...document.querySelectorAll(sel)].find((e) => e.textContent.trim().includes(label) && !e.disabled).click(); }, sel, label);
   if (opts.wait !== 0) await sleep(opts.wait || 250);
 }
@@ -68,7 +70,7 @@ async function main() {
   await new Promise((r) => server.listen(0, "127.0.0.1", r));
   const base = "http://127.0.0.1:" + server.address().port;
   const browser = await puppeteer.launch({ executablePath: process.env.CHROME || "/usr/bin/google-chrome", args: ["--no-sandbox"], headless: "new" });
-  const run = async (name, fn) => { console.log("\n" + name); try { await fn(); } catch (e) { failures++; console.log("  ✗ threw: " + e.message.split("\n")[0]); } };
+  const run = async (name, fn) => { console.log("\n" + name); try { await fn(); } catch (e) { failures++; console.log("  ✗ threw: " + e.message.split("\n")[0] + " @ " + (e.stack.split("\n").find(function (l) { return l.indexOf("e2e-live.js") !== -1; }) || "").trim()); } };
 
   await run("S0 · nothing configured → clearly-labelled sample-data flow, no errors", async () => {
     const { page, errors } = await open(browser, { state: STATE(["mail"]), base });

@@ -7,7 +7,7 @@
 
   if ("serviceWorker" in navigator) {
     window.addEventListener("load", function () {
-      navigator.serviceWorker.register("sw.js", { scope: "./" }).catch(function () {
+      navigator.serviceWorker.register("sw.js", { scope: "./", updateViaCache: "none" }).catch(function () {
         /* Registration can fail on file:// pages; ignore in the prototype. */
       });
     });

@@ -809,7 +809,7 @@ var AOEngine = (() => {
 
   // ../ao-intelligence-app/snack-sdk54/src/engine/model.ts
   function newState() {
-    return { v: 1, step: "welcome", cursor: 0, selected: ["bank"], connected: {}, skipped: [], requests: {}, doneTasks: [], replied: [], edits: {} };
+    return { v: 1, step: "welcome", cursor: 0, selected: ["bank"], connected: {}, skipped: [], requests: {}, doneTasks: [], replied: [], edits: {}, userTasks: [], userTargets: [] };
   }
   function parseState(raw) {
     if (!raw) return newState();
@@ -855,10 +855,21 @@ var AOEngine = (() => {
   function universeOf(s, today, live) {
     const u = generateUniverse(profileOf(s), today || todayIso());
     const c = s.connected;
-    const flags = { mail: !!(c.mail && c.mail.live), calendar: !!(c.calendar && c.calendar.live), bank: !!(c.bank && c.bank.live), sales: Object.keys(c).some((k) => k.indexOf("sales:") === 0 && c[k].live) };
-    if (!flags.mail && !flags.calendar && !flags.bank && !flags.sales) return u;
+    const real = !!s.real;
+    const isLive = (k) => !!(c[k] && (real || c[k].live));
+    const flags = { mail: isLive("mail"), calendar: isLive("calendar"), bank: isLive("bank"), sales: Object.keys(c).some((k) => k.indexOf("sales:") === 0 && (real || c[k].live)) };
+    if (real) {
+      u.orders = [];
+      u.bank = [];
+      u.invoices = [];
+      u.emails = [];
+      u.events = [];
+      u.otherMessages = 0;
+      u.monthTarget = s.moneyGoal || 0;
+    } else if (!flags.mail && !flags.calendar && !flags.bank && !flags.sales) return u;
     const L = live || {};
     u.live = flags;
+    if (real) u.real = true;
     if (flags.mail) {
       u.emails = L.mail || [];
       u.otherMessages = L.otherMessages || 0;
@@ -868,6 +879,7 @@ var AOEngine = (() => {
     if (flags.sales) {
       u.orders = (L.orders || []).slice();
     }
+    if (real) return u;
     const since = addDays(u.today, -29);
     const sumIn = (u.bank || []).filter((t) => t.direction === "in" && t.date >= since).reduce((a, t) => a + t.amount, 0);
     const sumSales = (u.orders || []).filter((o) => o.date >= since).reduce((a, o) => a + o.total, 0);
@@ -1017,6 +1029,8 @@ var AOEngine = (() => {
     }
     const bankTx = flags.bank ? u.bank : [];
     const sum = (arr) => arr.reduce((a, b) => a + b, 0);
+    const bankLatest = bankTx.reduce((m, t) => t.date > m ? t.date : m, "");
+    const bankStale = !!bankLatest && bankLatest < addDays(today, -3);
     const salesDay = (d) => sum(orders.filter((o) => o.date === d).map((o) => o.total));
     const countDay = (d) => orders.filter((o) => o.date === d).length;
     const inDay = (d) => sum(bankTx.filter((t) => t.date === d && t.direction === "in").map((t) => t.amount));
@@ -1083,31 +1097,51 @@ var AOEngine = (() => {
     const todayEvents = events.filter((e) => e.date === today);
     const now = nowHHMM || "00:00";
     const nextEvent = todayEvents.filter((e) => e.start >= now)[0] || events.filter((e) => e.date > today)[0] || null;
-    const tasks = [];
-    unreplied.slice(0, 2).forEach((e) => tasks.push({ id: "reply:" + e.id, title: "Reply to " + e.from + " (" + e.org + ")", done: s.doneTasks.indexOf("reply:" + e.id) !== -1, tab: "inbox" }));
-    if (invoices) {
-      u.invoices.filter((i) => i.status === "overdue").slice(0, 1).forEach((i) => tasks.push({ id: "chase:" + i.id, title: "Chase " + i.client + " \u2014 " + fmtMoney(i.amount) + " is " + i.daysOverdue + " days overdue", done: s.doneTasks.indexOf("chase:" + i.id) !== -1, tab: "money" }));
-    }
-    if (nextEvent && nextEvent.kind === "meeting" && nextEvent.date === today) tasks.push({ id: "prep:" + nextEvent.id, title: "Get ready for \u201C" + nextEvent.title + "\u201D at " + time12(nextEvent.start), done: s.doneTasks.indexOf("prep:" + nextEvent.id) !== -1, tab: "calendar" });
-    if (flags.bank) tasks.push({ id: "bank-review", title: "Look over this week\u2019s money out", done: s.doneTasks.indexOf("bank-review") !== -1, tab: "money" });
-    if (!flags.bank) tasks.push({ id: "connect-bank", title: "Add your bank to see money in and out", done: false, tab: "connections" });
-    fl.tasks.slice(0, flags.any ? 2 : 3).forEach((t, i) => tasks.push({ id: "t" + i, title: t, done: s.doneTasks.indexOf("t" + i) !== -1 }));
-    const shownTasks = tasks.slice(0, 6);
+    const real = !!s.real;
+    let shownTasks = [];
     const targets = [];
-    const tdone = shownTasks.filter((t) => t.done).length;
-    targets.push({ label: "Today\u2019s tasks", text: tdone + " of " + shownTasks.length + " done", pct: shownTasks.length ? tdone / shownTasks.length : 0 });
-    if (revenueSource !== "none") {
-      const total = revenueSource === "bank" ? sum(series.map((x) => x.primary)) : sum(series.map((x) => x.primary));
-      const target = u.monthTarget;
-      targets.push({ label: revenueSource === "bank" ? "Money in, last 30 days" : "Sales, last 30 days", text: fmtMoney(total, true) + " of " + fmtMoney(target, true), pct: Math.min(1, total / target) });
+    if (real) {
+      s.userTasks.forEach((t) => shownTasks.push({ id: "u:" + t.id, title: t.title, done: t.done, user: true }));
+      const sugg = [];
+      unreplied.slice(0, 3).forEach((e) => sugg.push({ id: "reply:" + e.id, title: "Reply to " + e.from + (e.org ? " (" + e.org + ")" : "") + " \u2014 " + e.subject, done: s.doneTasks.indexOf("reply:" + e.id) !== -1, tab: "inbox" }));
+      todayEvents.filter((e) => e.kind === "meeting" && !e.allDay && e.start >= (nowHHMM || "00:00")).slice(0, 2).forEach((e) => sugg.push({ id: "prep:" + e.id, title: "Get ready for \u201C" + e.title + "\u201D at " + time12(e.start), done: s.doneTasks.indexOf("prep:" + e.id) !== -1, tab: "calendar" }));
+      shownTasks = shownTasks.concat(sugg);
+    } else {
+      const tasks = [];
+      unreplied.slice(0, 2).forEach((e) => tasks.push({ id: "reply:" + e.id, title: "Reply to " + e.from + " (" + e.org + ")", done: s.doneTasks.indexOf("reply:" + e.id) !== -1, tab: "inbox" }));
+      if (invoices) {
+        u.invoices.filter((i) => i.status === "overdue").slice(0, 1).forEach((i) => tasks.push({ id: "chase:" + i.id, title: "Chase " + i.client + " \u2014 " + fmtMoney(i.amount) + " is " + i.daysOverdue + " days overdue", done: s.doneTasks.indexOf("chase:" + i.id) !== -1, tab: "money" }));
+      }
+      if (nextEvent && nextEvent.kind === "meeting" && nextEvent.date === today) tasks.push({ id: "prep:" + nextEvent.id, title: "Get ready for \u201C" + nextEvent.title + "\u201D at " + time12(nextEvent.start), done: s.doneTasks.indexOf("prep:" + nextEvent.id) !== -1, tab: "calendar" });
+      if (flags.bank) tasks.push({ id: "bank-review", title: "Look over this week\u2019s money out", done: s.doneTasks.indexOf("bank-review") !== -1, tab: "money" });
+      if (!flags.bank) tasks.push({ id: "connect-bank", title: "Add your bank to see money in and out", done: false, tab: "connections" });
+      fl.tasks.slice(0, flags.any ? 2 : 3).forEach((t, i) => tasks.push({ id: "t" + i, title: t, done: s.doneTasks.indexOf("t" + i) !== -1 }));
+      shownTasks = tasks.slice(0, 6);
     }
-    if (flags.mail) targets.push({ label: "Replies cleared", text: s.replied.length + " of " + u.emails.length, pct: u.emails.length ? s.replied.length / u.emails.length : 0 });
-    if (flags.books) {
-      const paid = u.invoices.filter((i) => i.status === "paid").length;
-      targets.push({ label: fl.invoiceWord.charAt(0).toUpperCase() + fl.invoiceWord.slice(1) + "s paid", text: paid + " of " + u.invoices.length, pct: paid / u.invoices.length });
+    const tdone = shownTasks.filter((t) => t.done).length;
+    if (real) {
+      if (shownTasks.length) targets.push({ label: "Today\u2019s tasks", text: tdone + " of " + shownTasks.length + " done", pct: tdone / shownTasks.length });
+      if (revenueSource !== "none" && s.moneyGoal && s.moneyGoal > 0) {
+        const total = sum(series.map((x) => x.primary));
+        targets.push({ id: "money", moneyGoal: true, label: revenueSource === "bank" ? "Money in, last 30 days" : "Sales, last 30 days", text: fmtMoney(total, true) + " of " + fmtMoney(s.moneyGoal, true), pct: Math.min(1, total / s.moneyGoal), current: total, goal: s.moneyGoal });
+      }
+      s.userTargets.forEach((t) => targets.push({ id: t.id, user: true, label: t.label, current: t.current, goal: t.goal, unit: t.unit, text: t.unit === "\xA3" ? fmtMoney(t.current, true) + " of " + fmtMoney(t.goal, true) : t.current + " of " + t.goal + (t.unit ? " " + t.unit : ""), pct: t.goal > 0 ? Math.min(1, Math.max(0, t.current / t.goal)) : 0 }));
+    } else {
+      targets.push({ label: "Today\u2019s tasks", text: tdone + " of " + shownTasks.length + " done", pct: shownTasks.length ? tdone / shownTasks.length : 0 });
+      if (revenueSource !== "none") {
+        const total = revenueSource === "bank" ? sum(series.map((x) => x.primary)) : sum(series.map((x) => x.primary));
+        const target = u.monthTarget;
+        targets.push({ label: revenueSource === "bank" ? "Money in, last 30 days" : "Sales, last 30 days", text: fmtMoney(total, true) + " of " + fmtMoney(target, true), pct: Math.min(1, total / target) });
+      }
+      if (flags.mail) targets.push({ label: "Replies cleared", text: s.replied.length + " of " + u.emails.length, pct: u.emails.length ? s.replied.length / u.emails.length : 0 });
+      if (flags.books) {
+        const paid = u.invoices.filter((i) => i.status === "paid").length;
+        targets.push({ label: fl.invoiceWord.charAt(0).toUpperCase() + fl.invoiceWord.slice(1) + "s paid", text: paid + " of " + u.invoices.length, pct: paid / u.invoices.length });
+      }
+      const left0 = setupLeft(s);
+      if (left0 > 0 && s.selected.length) targets.push({ label: "Setup", text: s.selected.length - left0 + " of " + s.selected.length + " connected", pct: (s.selected.length - left0) / s.selected.length });
     }
     const left = setupLeft(s);
-    if (left > 0 && s.selected.length) targets.push({ label: "Setup", text: s.selected.length - left + " of " + s.selected.length + " connected", pct: (s.selected.length - left) / s.selected.length });
     const overview = buildOverview(u, flags, { revenueSource, salesDay, countDay, inDay, today, yest, invoices, unreplied, nextEvent, todayEvents, unit, units, salesNames });
     const teasers = [];
     teasers.push(flags.mail ? { text: unreplied.length ? unreplied.length + " " + plural(unreplied.length, "email needs", "emails need") + " a reply" : "You\u2019re all caught up on email", tab: "inbox" } : { text: "Connect your email to see what needs a reply", tab: "connections", muted: true });
@@ -1153,7 +1187,10 @@ var AOEngine = (() => {
       liveErrors: Object.keys(liveData && liveData.errors || {}).map((k) => ({ key: k, message: liveData.errors[k] })),
       liveAccounts: liveData && liveData.accounts || {},
       extras: liveData && liveData.extras || {},
-      reauth: liveData && liveData.reauth || {}
+      reauth: liveData && liveData.reauth || {},
+      real,
+      bankLatest,
+      bankStale
     };
   }
   function buildOverview(u, flags, x) {
@@ -1183,7 +1220,10 @@ var AOEngine = (() => {
       }
     } else if (x.revenueSource === "bank") {
       const inn = x.inDay(x.today);
-      parts.push(inn > 0 ? fmtMoney(inn) + " came in today for " + name + ", " + cmp(inn, x.inDay(x.yest)) + "." : "Nothing has landed in the bank yet today for " + name + ".");
+      const latest = u.bank.reduce((m, t) => t.date > m ? t.date : m, "");
+      if (u.real && !u.bank.length) parts.push("Your bank statement has no transactions in it yet.");
+      else if (u.real && latest && latest < addDays(x.today, -3)) parts.push("Your latest bank line is from " + shortDate(latest) + ". Upload a newer statement from Connections to bring the picture up to date.");
+      else parts.push(inn > 0 ? fmtMoney(inn) + " came in today for " + name + ", " + cmp(inn, x.inDay(x.yest)) + "." : "Nothing has landed in the bank yet today for " + name + ".");
       sug.push("Add a sales or payments tool to see orders and your average " + x.unit + ", not just money in.");
     }
     const bits = [];
@@ -1193,7 +1233,7 @@ var AOEngine = (() => {
     if (bits.length) parts.push(bits.join("; ").replace(/^./, (ch) => ch.toUpperCase()) + ".");
     if (x.invoices && x.invoices.overdueCount) sug.unshift("A friendly nudge on the oldest overdue " + fl.invoiceWord + " is the quickest way to bring cash in.");
     if (x.unreplied.length) sug.unshift("Start with " + x.unreplied[0].from + "\u2019s email \u2014 a draft reply is ready in your Inbox.");
-    if (x.revenueSource !== "none" && fl.busyHint) sug.push(fl.busyHint + " A quick check of stock, people or the diary beforehand pays off.");
+    if (x.revenueSource !== "none" && fl.busyHint && !u.real) sug.push(fl.busyHint + " A quick check of stock, people or the diary beforehand pays off.");
     if (!flags.mail) sug.push("Add your email and I\u2019ll have draft replies waiting each morning.");
     if (!flags.calendar) sug.push("Add your calendar to see today\u2019s schedule here.");
     if (!flags.bank && x.revenueSource === "sales" && sug.length < 3) sug.push("Add your bank for the full money picture.");

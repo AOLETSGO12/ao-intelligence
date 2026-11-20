@@ -2,7 +2,15 @@
 (function (root) {
   "use strict";
   var E = root.AOEngine;
-  var KEY = "ao-intelligence-journey-v2";
+  // Real app by default. The old walkthrough with generated sample data is only reachable on purpose: add ?demo=1 to the address.
+  var DEMO = false;
+  try {
+    var qs = root.location.search || "";
+    if (/[?&]demo=1(&|$)/.test(qs)) root.localStorage.setItem("ao-mode", "demo");
+    else if (/[?&]demo=0(&|$)/.test(qs)) root.localStorage.removeItem("ao-mode");
+    DEMO = root.localStorage.getItem("ao-mode") === "demo";
+  } catch (e) { /* storage blocked: stay in real mode */ }
+  var KEY = DEMO ? "ao-intelligence-journey-v2" : "ao-app-v1";
 
   function h(tag, props) {
     var el = document.createElement(tag);
@@ -30,7 +38,9 @@
   function load() {
     var raw = null;
     try { raw = root.localStorage.getItem(KEY); } catch (e) { /* ignore */ }
-    return E.parseState(raw);
+    var st = E.parseState(raw);
+    st.real = !DEMO;
+    return st;
   }
   function save(s) {
     try { root.localStorage.setItem(KEY, JSON.stringify(s)); } catch (e) { /* ignore */ }
@@ -44,6 +54,7 @@
       }
     } catch (e) { /* ignore */ }
     try { root.localStorage.removeItem(KEY); } catch (e) { /* ignore */ }
+    if (root.AOReal) { root.AOReal.clearBank(); root.AOReal.clearCalendar(); }
   }
   function baseUrl() {
     var p = root.location.href.split("#")[0].split("?")[0];
@@ -64,15 +75,16 @@
   }
   function confirmReset(onYes) {
     var back = h("div", { class: "j-modal-back is-open", role: "presentation" });
-    var dlg = h("div", { class: "j-modal", role: "dialog", "aria-modal": "true", "aria-label": "Reset demo", tabindex: "-1" },
+    var dlg = h("div", { class: "j-modal", role: "dialog", "aria-modal": "true", "aria-label": "Start over", tabindex: "-1" },
       h("h2", null, "Start over?"),
-      h("p", null, "This clears your account, your business and every connection on this device — including any live sign-ins kept in this browser (we also ask Google to revoke access) — and takes you back to the beginning. To fully remove access you can also revoke AO Intelligence in your provider’s security settings."),
+      !DEMO ? h("p", null, "This erases everything this app keeps on this device — your tasks and targets, the bank statement and calendar file you uploaded, and every connection (mailbox passwords and sign-in tokens included; we also ask Google to revoke access). Your emails, calendars and bank themselves are not touched. To fully remove access you can also revoke it in your provider’s security settings.") : null,
+      DEMO ? h("p", null, "This clears your account, your business and every connection on this device — including any live sign-ins kept in this browser (we also ask Google to revoke access) — and takes you back to the beginning. To fully remove access you can also revoke AO Intelligence in your provider’s security settings.") : null,
       h("div", { class: "j-actions" },
         h("button", { class: "btn btn-secondary", type: "button", on: { click: function () { document.body.removeChild(back); } } }, "Keep going"),
-        h("button", { class: "btn btn-primary", type: "button", on: { click: function () { reset(); onYes(); } } }, "Reset demo")));
+        h("button", { class: "btn btn-primary", type: "button", on: { click: function () { reset(); onYes(); } } }, DEMO ? "Reset demo" : "Erase and start over")));
     back.appendChild(dlg);
     document.body.appendChild(back);
     dlg.focus();
   }
-  root.AOStore = { h: h, clear: clear, load: load, save: save, reset: reset, baseUrl: baseUrl, copyText: copyText, confirmReset: confirmReset, KEY: KEY };
+  root.AOStore = { demo: DEMO, h: h, clear: clear, load: load, save: save, reset: reset, baseUrl: baseUrl, copyText: copyText, confirmReset: confirmReset, KEY: KEY };
 })(window);

@@ -13,15 +13,45 @@
   <meta name="apple-mobile-web-app-title" content="AO Intelligence">
   <link rel="apple-touch-icon" href="assets/apple-touch-icon.png">
   <link rel="manifest" href="manifest.webmanifest">
-  <link rel="stylesheet" href="css/styles.css">
-  <link rel="stylesheet" href="css/journey.css">
-  <script defer src="js/brand.js"></script>
-  <script defer src="js/engine.js"></script>
-  <script defer src="js/config.js"></script>
-  <script defer src="js/live.js"></script>
-  <script defer src="js/ui.js"></script>
-  <script defer src="js/app.js"></script>
-  <script defer src="js/pwa.js"></script>
+  <link rel="stylesheet" href="css/styles.css?v=20261120b">
+  <link rel="stylesheet" href="css/journey.css?v=20261120b">
+  <script>
+  /* If anything fails to load (for example old cached files), say so and offer a one-tap fix instead of a dead page. */
+  (function () {
+    var shown = false;
+    function fix() {
+      var p = [];
+      try { if (navigator.serviceWorker) p.push(navigator.serviceWorker.getRegistrations().then(function (r) { return Promise.all(r.map(function (x) { return x.unregister(); })); })); } catch (e) {}
+      try { if (window.caches) p.push(caches.keys().then(function (k) { return Promise.all(k.map(function (x) { return caches.delete(x); })); })); } catch (e) {}
+      Promise.all(p).then(function () { location.reload(); }, function () { location.reload(); });
+    }
+    function show(msg) {
+      if (shown || !document.body) return; shown = true;
+      var d = document.createElement("div"); d.setAttribute("role", "alert");
+      d.style.cssText = "position:fixed;left:12px;right:12px;bottom:12px;z-index:99999;background:#fff4e5;border:1px solid #e0a040;border-radius:12px;padding:12px 14px;font:15px/1.4 system-ui,sans-serif;color:#3a2a00;box-shadow:0 6px 24px rgba(0,0,0,.2)";
+      d.innerHTML = "<strong>Something didn’t load properly.</strong> " + msg + " <br><button type=\"button\" id=\"ao-fix\" style=\"margin-top:8px;padding:10px 14px;border-radius:10px;border:0;background:#1b5f56;color:#fff;font:inherit\">Fix it and reload</button>";
+      document.body.appendChild(d); document.getElementById("ao-fix").onclick = fix;
+    }
+    window.addEventListener("error", function (e) {
+      var t = e && e.target;
+      if (t && t.tagName === "SCRIPT") show("A file didn’t load (" + (t.getAttribute("src") || "script") + ").");
+      else if (e && e.filename && /\/js\//.test(e.filename)) show("A script hit an error (" + (e.message || "unknown") + ").");
+    }, true);
+    window.addEventListener("load", function () {
+      setTimeout(function () { var m = document.getElementById("journey") || document.getElementById("app-panel"); if (m && !m.children.length) show("The page content didn’t appear."); }, 2500);
+    });
+    window.AO_FIX = fix;
+  })();
+  </script>
+  <script defer src="js/brand.js?v=20261120b"></script>
+  <script defer src="js/engine.js?v=20261120b"></script>
+  <script defer src="js/config.js?v=20261120b"></script>
+  <script defer src="js/ics.js?v=20261120b"></script>
+  <script defer src="js/real.js?v=20261120b"></script>
+  <script defer src="js/live.js?v=20261120b"></script>
+  <script defer src="js/ui.js?v=20261120b"></script>
+  <script defer src="js/app.js?v=20261120b"></script>
+  <script defer src="js/pwa.js?v=20261120b"></script>
 </head>
 <body class="journey-page app-page">
   <span data-brand-title="Your day" hidden></span>
@@ -36,9 +66,9 @@
       </a>
       <div class="dash-header-right">
         <span class="app-biz" id="app-biz"></span>
-        <span class="demo-badge" id="data-badge">Sample data</span>
+        <span class="demo-badge" id="data-badge" hidden>Sample data</span>
         <button class="btn btn-ghost btn-small" type="button" id="refresh-live" hidden>Refresh</button>
-        <button class="btn btn-ghost btn-small" type="button" id="reset-demo">Reset demo</button>
+        <button class="btn btn-ghost btn-small" type="button" id="reset-demo">Start over</button>
       </div>
     </div>
   </header>

@@ -8,8 +8,24 @@
   var root = document.getElementById("journey");
   var overBtn = document.getElementById("start-over");
   var state = S.load();
+  var REAL = !S.demo;
+  var REAL_KEYS = ["mail", "calendar", "bank", "sales:stripe", "sales:shopify"];
+  var REAL_DEFAULT = ["mail", "calendar", "bank"];
   var single = null; // item key when connecting just one service from the dashboard
   var ui = { search: "", provider: null, field: "", error: "", unlisted: false, unlistedText: "", copied: false, pickErr: "" };
+
+  if (REAL) {
+    // Real app: say plainly what each connection does today.
+    Object.assign(E.ITEM_BY_KEY["bank"], { short: "Upload a bank statement (CSV or OFX) to see money in and out. It stays on this device.", sees: ["Money in and out, from the statement you upload", "Totals, a daily chart and categories", "Nothing is sent anywhere — the file is read in your browser"], never: "Nothing is linked to your bank. A live Open Banking connection is coming soon; until then you choose what to upload." });
+    Object.assign(E.ITEM_BY_KEY["sales:stripe"], { short: "Card payments and payouts, with a read-only key." });
+    Object.assign(E.ITEM_BY_KEY["mail"], { never: "We only read your inbox and save drafts to your Drafts folder. Nothing is ever sent for you." });
+    state.selected = state.selected.filter(function (k) { return REAL_KEYS.indexOf(k) !== -1; });
+    // walk through email, calendar, then money (in place: the engine's queue() reads this same array)
+    E.ITEM_ORDER.sort(function (a, b) { var A = REAL_KEYS.indexOf(a), B = REAL_KEYS.indexOf(b); return (A === -1 ? 99 : A) - (B === -1 ? 99 : B); });
+  } else {
+    var badge = document.getElementById("mode-badge"); if (badge) badge.hidden = false;
+    var fine = document.getElementById("start-fine"); if (fine) fine.textContent = "Demo mode (?demo=1): sample data only — nothing real is connected. Remove ?demo=1 from the address for the real app.";
+  }
 
   document.querySelectorAll("[data-year]").forEach(function (el) { el.textContent = String(new Date().getFullYear()); });
 
@@ -61,13 +77,14 @@
       var bad = false;
       if (!name.value.trim()) { errs.name = "Please tell us your name."; bad = true; }
       if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.value.trim())) { errs.email = "That email doesn’t look right."; bad = true; }
-      if (pass.value.length < 8) { errs.pass = "Please use at least 8 characters."; bad = true; }
+      if (!REAL && pass.value.length < 8) { errs.pass = "Please use at least 8 characters."; bad = true; }
       if (bad) { state.account = { name: name.value.trim(), email: email.value.trim() }; showErrs(); return; }
       state.account = { name: name.value.trim(), email: email.value.trim() };
       go("business"); // the password is deliberately never stored
     } } });
     function showErrs() {
       [["acc-name", errs.name], ["acc-email", errs.email], ["acc-pass", errs.pass]].forEach(function (p) {
+        if (!document.getElementById(p[0])) return;
         var wrap = document.getElementById(p[0]).parentNode;
         var old = wrap.querySelector(".j-error"); if (old) wrap.removeChild(old);
         wrap.classList.toggle("has-error", !!p[1]);
@@ -77,14 +94,14 @@
     }
     form.appendChild(field("acc-name", "Your name", name));
     form.appendChild(field("acc-email", "Email", email));
-    form.appendChild(field("acc-pass", "Password", pass, "Demo only: we don’t keep or send your password."));
-    form.appendChild(h("button", { class: "btn btn-primary j-wide", type: "submit" }, "Create my account"));
+    if (!REAL) form.appendChild(field("acc-pass", "Password", pass, "Demo only: we don’t keep or send your password."));
+    form.appendChild(h("button", { class: "btn btn-primary j-wide", type: "submit" }, REAL ? "Continue" : "Create my account"));
     setRoot(card(
-      h("p", { class: "j-eyebrow" }, "Step 1 · Create your account"),
+      h("p", { class: "j-eyebrow" }, REAL ? "Step 1 · About you" : "Step 1 · Create your account"),
       h("h1", null, "Let’s get your agent started"),
       h("p", { class: "j-lead" }, "A few quick details, then we’ll set up your business. It takes about 3 minutes."),
       form,
-      h("p", { class: "j-fine" }, "This is a preview: your details stay on this device and no real account is created.")));
+      h("p", { class: "j-fine" }, REAL ? "Your name and email are used to personalise the app and sign your reply drafts. They stay on this device — there’s no account or password to remember." : "This is a preview: your details stay on this device and no real account is created.")));
   }
 
   function stepBusiness() {
@@ -102,11 +119,12 @@
         name.focus(); return;
       }
       state.business = { name: name.value.trim(), industry: ind.value, size: size.value };
-      state.selected = state.selected && state.selected.length ? state.selected : ["bank"];
+      if (REAL && (!state.selected.length || (state.selected.length === 1 && state.selected[0] === "bank" && !Object.keys(state.connected).length))) state.selected = REAL_DEFAULT.slice();
+      else if (!state.selected.length) state.selected = ["bank"];
       go("w-welcome");
     } } },
       field("biz-name", "Business name", name),
-      field("biz-ind", "What kind of business?", ind, "We use this to tailor your sample figures and daily overview."),
+      field("biz-ind", "What kind of business?", ind, REAL ? "We use this to word your daily overview." : "We use this to tailor your sample figures and daily overview."),
       field("biz-size", "Roughly how big?", size),
       h("button", { class: "btn btn-primary j-wide", type: "submit" }, "Continue"));
     setRoot(card(
@@ -143,7 +161,8 @@
     function draw() {
       S.clear(wrap);
       E.GROUPS.forEach(function (g) {
-        var items = E.ITEMS.filter(function (i) { return i.group === g; });
+        var items = E.ITEMS.filter(function (i) { return i.group === g && (!REAL || REAL_KEYS.indexOf(i.key) !== -1); });
+        if (!items.length) return;
         wrap.appendChild(h("h2", { class: "j-group" }, g));
         wrap.appendChild(h("div", { class: "j-tiles" }, items.map(function (it) {
           var on = sel.indexOf(it.key) !== -1;
@@ -153,6 +172,7 @@
             h("span", { class: "j-tile-short" }, it.short));
         })));
       });
+      if (REAL) wrap.appendChild(h("p", { class: "j-hint j-pad" }, "Coming soon: live bank connections (Open Banking), PayPal, SumUp, Square, Xero, QuickBooks and FreeAgent."));
       wrap.appendChild(h("div", { class: "j-field" }, h("label", { for: "pick-other" }, "Something else? Tell us"), note,
         h("p", { class: "j-hint" }, "We’ll note it down — we’re adding more every month.")));
       cta.textContent = sel.length ? "Continue with " + sel.length + " selected" : "Continue without connecting anything";
@@ -165,7 +185,7 @@
     setRoot(card(
       progress(),
       h("h1", null, "What do you use?"),
-      h("p", { class: "j-lead" }, "Tap anything you’d like to connect. Your bank is ticked to start — untick it if you’d rather not. Nothing here is required."),
+      h("p", { class: "j-lead" }, REAL ? "Tap anything you’d like to connect. Nothing here is required, and you can add or remove things later." : "Tap anything you’d like to connect. Your bank is ticked to start — untick it if you’d rather not. Nothing here is required."),
       wrap, cta,
       h("button", { class: "btn btn-secondary j-wide j-gap", type: "button", on: { click: function () {
         state.requests.other = note.value.trim() || undefined; state.selected = []; save(); go("w-done");
@@ -258,6 +278,7 @@
   }
 
   function stepItem() {
+    if (REAL) return stepItemReal();
     var key = single || E.queue(state)[state.cursor];
     var item = E.ITEM_BY_KEY[key];
     if (!item) { go("w-done"); return; }
@@ -356,6 +377,294 @@
     var s = document.getElementById("prov-search"); if (s && ui.search) { s.focus(); s.setSelectionRange(s.value.length, s.value.length); }
   }
 
+  // =====================================================================================================
+  // Real app: connect one item (no sample screens). Everything here either talks to the person's real
+  // account or reads a file they choose; nothing is simulated.
+  // =====================================================================================================
+  var R = window.AOReal, L = window.AOLive;
+  var rui = { provider: null, vals: {}, busy: false, error: "", preview: null, capsKnown: false, caps: null, reupload: false, bankName: "" };
+  function resetReal() { rui = { provider: null, vals: {}, busy: false, error: "", preview: null, capsKnown: false, caps: null, reupload: false, bankName: "" }; }
+  var _go = go; // reset the real-form state whenever the step changes
+  go = function (step, extra) { resetReal(); _go(step, extra); };
+
+  function guideSteps(g) {
+    if (!g || !g.steps) return null;
+    return h("ol", { class: "j-steps" }, g.steps.map(function (st) {
+      return h("li", null, st.t, st.href ? [" ", h("a", { href: st.href, target: "_blank", rel: "noopener noreferrer", class: "j-extlink" }, (st.link || "Open") + " ↗")] : null);
+    }));
+  }
+  function textInput(id, label, key, opts) {
+    opts = opts || {};
+    var inp = h("input", { id: id, type: opts.type || "text", placeholder: opts.placeholder || "", value: rui.vals[key] != null ? rui.vals[key] : (opts.value || ""), autocomplete: opts.type === "password" ? "new-password" : (opts.autocomplete || "off"), autocapitalize: "none", autocorrect: "off", spellcheck: "false", inputmode: opts.inputmode || null });
+    inp.addEventListener("input", function () { rui.vals[key] = inp.value; });
+    if (rui.vals[key] == null && opts.value) rui.vals[key] = opts.value;
+    return field(id, label, inp, opts.hint);
+  }
+  function errBox() { return h("p", { class: "j-error j-block", role: "alert", id: "real-err", hidden: rui.error ? null : true }, rui.error); }
+  function showError(msg) {
+    rui.error = msg; var e = document.getElementById("real-err");
+    if (e) { e.textContent = msg; e.hidden = !msg; if (msg && e.scrollIntoView) { try { e.scrollIntoView({ block: "center", behavior: "smooth" }); } catch (x) { e.scrollIntoView(); } } }
+  }
+  /** One tap-friendly button. Never disabled while idle: pressing it always does something (connects, or tells you what's missing). */
+  function actionButton(label, fn, cls) {
+    var btn = h("button", { class: "btn " + (cls || "btn-primary") + " j-wide", type: "button" }, label);
+    btn.addEventListener("click", function () {
+      if (rui.busy) return;
+      showError("");
+      var p; try { p = Promise.resolve(fn()); } catch (e) { p = Promise.reject(e); }
+      rui.busy = true; btn.classList.add("is-busy"); btn.textContent = "Connecting…";
+      p.then(function (conn) { rui.busy = false; if (conn) finishReal(conn); else { btn.classList.remove("is-busy"); btn.textContent = label; } })
+        .catch(function (e) { rui.busy = false; btn.classList.remove("is-busy"); btn.textContent = label; showError((e && e.message) || "That didn’t work. Please try again."); });
+    });
+    return btn;
+  }
+  function finishReal(conn) {
+    var key = conn.key;
+    if (state.selected.indexOf(key) === -1) state.selected.push(key);
+    state.connected[key] = conn; state.skipped = state.skipped.filter(function (k) { return k !== key; });
+    rui.reupload = false; rui.preview = null; save(); render();
+  }
+  function needBackend(what) {
+    if (!L || !L.configured().backend) return Promise.reject(new Error("This needs the AO connection service, which isn’t switched on for this site yet. " + what));
+    return L.backendCaps().then(function (caps) {
+      if (!caps) throw new Error("We couldn’t reach the AO connection service just now. Please try again in a moment.");
+      return caps;
+    });
+  }
+  function serviceNotice() {
+    if (!L) return null;
+    if (!L.configured().backend) return h("div", { class: "j-notice", role: "note" }, h("strong", null, "Connection service not switched on yet. "), "Email links, calendar links and Stripe go through a small AO service that hasn’t been set up for this site. Bank statements and calendar files still work without it.");
+    if (rui.capsKnown && !rui.caps) return h("div", { class: "j-notice is-warn", role: "alert" }, h("strong", null, "Can’t reach the connection service. "), "Check your internet and reload. If it keeps happening the service may be down.");
+    return null;
+  }
+  function checkCaps() {
+    if (rui.capsKnown || !L || !L.configured().backend) return;
+    rui.capsKnown = true; // set first so we only ask once
+    L.backendCaps().then(function (caps) { rui.caps = caps; if (!caps) { var n = serviceNotice(); if (n && document.getElementById("real-notice")) { var slot = document.getElementById("real-notice"); S.clear(slot); slot.appendChild(n); } } });
+  }
+  function providerList(list, onPick) {
+    return h("div", { class: "j-results j-results-open", role: "listbox", "aria-label": "Choose one" }, list.map(function (p) {
+      var on = rui.provider === p.id;
+      return h("button", { class: "j-result" + (on ? " is-on" : ""), type: "button", role: "option", "aria-selected": on ? "true" : "false", on: { click: function () { var y = window.pageYOffset; rui.provider = p.id; rui.error = ""; onPick && onPick(p); render(); window.scrollTo(0, y); var pn = document.getElementById("real-panel"); if (pn && pn.scrollIntoView) { try { pn.scrollIntoView({ block: "start", behavior: "smooth" }); } catch (x) { pn.scrollIntoView(); } } } } },
+        h("span", null, p.name), on ? h("span", { class: "j-result-tick", "aria-hidden": "true" }, "✓") : null);
+    }));
+  }
+  function fileInput(accept, onFile, label) {
+    var inp = h("input", { type: "file", accept: accept, id: "real-file", class: "j-file" });
+    inp.addEventListener("change", function () {
+      var f = inp.files && inp.files[0]; if (!f) return;
+      if (f.size > 12 * 1024 * 1024) { showError("That file is bigger than 12 MB. Try a shorter date range."); return; }
+      var rd = new FileReader();
+      rd.onload = function () { try { onFile(String(rd.result || ""), f); } catch (e) { showError(e.message); } };
+      rd.onerror = function () { showError("We couldn’t read that file."); };
+      rd.readAsText(f);
+    });
+    return h("label", { class: "j-filebtn btn btn-secondary j-wide", for: "real-file" }, label || "Choose a file", inp);
+  }
+
+  // ---------------------------------------------------------------- mail
+  function realMail(children) {
+    var g = R.MAIL.filter(function (x) { return x.id === rui.provider; })[0];
+    children.push(h("div", { class: "j-field" }, h("label", { id: "pick-label" }, "Which email do you use?"), providerList(R.MAIL)));
+    if (!g) { children.push(h("p", { class: "j-hint" }, "Choose your email provider above and we’ll show you exactly what to do.")); return; }
+    var panel = h("div", { class: "j-panel", id: "real-panel" });
+    panel.appendChild(h("h2", { class: "j-sub" }, g.name));
+    if (g.kind === "none") panel.appendChild(h("div", { class: "j-notice is-warn" }, g.note));
+    else {
+      if (g.kind === "microsoft") {
+        panel.appendChild(h("div", { class: "j-notice" }, g.note));
+        if (L && L.configured().microsoft) {
+          panel.appendChild(h("p", { class: "j-hint" }, "You’ll sign in with Microsoft in a small window. We ask only to read your mail and save reply drafts — we can’t send."));
+          panel.appendChild(actionButton("Sign in with Microsoft", function () { return L.connect("mail", g.id, g.name, "microsoft", {}, state.connected); }));
+        } else {
+          panel.appendChild(h("div", { class: "j-notice is-warn" }, h("strong", null, "One-time setup needed. "), "Signing in with Microsoft needs a free Microsoft app registration for this site (about 10 minutes, no approval). ", h("a", { href: "https://github.com/AOLETSGO12/ao-intelligence#2-microsoft--outlookcom--microsoft-365-mail-and-calendar", target: "_blank", rel: "noopener noreferrer", class: "j-extlink" }, "See the steps ↗")));
+        }
+        panel.appendChild(h("details", { class: "j-details" }, h("summary", null, "Can’t use that? Forward Outlook mail to another address instead"),
+          h("ol", { class: "j-steps" },
+            h("li", null, "Open Outlook mail forwarding settings and turn on forwarding to a Gmail, iCloud or Fastmail address you own. ", h("a", { href: "https://outlook.live.com/mail/0/options/mail/forwarding", target: "_blank", rel: "noopener noreferrer", class: "j-extlink" }, "Open forwarding ↗")),
+            h("li", null, "Choose that provider in the list above and connect it with an app password."))));
+      } else {
+        panel.appendChild(guideSteps(g));
+        if (g.note) panel.appendChild(h("p", { class: "j-hint" }, g.note));
+        var isOther = g.id === "imap";
+        panel.appendChild(textInput("real-addr", "Your email address", "address", { type: "email", inputmode: "email", autocomplete: "email", placeholder: "you@example.com", value: rui.vals.address || (state.account ? state.account.email : "") }));
+        panel.appendChild(textInput("real-pass", g.id === "imap" ? "Password or app password" : "App password", "password", { type: "password", placeholder: g.id === "gmail" ? "16-letter code" : "", hint: "Sent over an encrypted connection, sealed, and kept only in this browser. Never your normal password if the provider offers app passwords." }));
+        var host = textInput("real-host", "Mail server (IMAP)", "host", { value: rui.vals.host != null ? rui.vals.host : g.host, placeholder: "imap.example.com", hint: "Port 993 (SSL). " + (isOther ? "Find it on your provider’s help page." : "Already filled in — only change it if your provider says otherwise.") });
+        panel.appendChild(isOther ? host : h("details", { class: "j-details" }, h("summary", null, "Server settings"), host));
+        panel.appendChild(errBox());
+        panel.appendChild(actionButton("Connect " + (isOther ? "my email" : g.name), function () {
+          var v = rui.vals, addr = String(v.address || "").trim(), pw = String(v.password || ""), hostV = String(v.host || g.host || "").trim();
+          if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(addr)) return Promise.reject(new Error("Please enter your email address."));
+          if (!pw.trim()) return Promise.reject(new Error("Please paste the app password (see step " + (g.steps ? g.steps.length - 1 : 1) + " above)."));
+          if (!hostV) return Promise.reject(new Error("Please enter your mail server, for example imap.example.com."));
+          if (g.id === "gmail") pw = pw.replace(/\s+/g, "");
+          return needBackend("Email can’t be read directly from a web page, so it has to go through the service.").then(function () {
+            return L.connect("mail", g.id, isOther ? "Email (" + addr.split("@")[1] + ")" : g.name, "imap", { address: addr, password: pw, host: hostV }, state.connected);
+          });
+        }));
+        if (g.oauth === "google" && L && L.configured().google) {
+          panel.appendChild(h("p", { class: "j-or" }, "or"));
+          panel.appendChild(actionButton("Sign in with Google instead", function () { return L.connect("mail", "gmail", "Gmail", "google", {}, state.connected); }, "btn-secondary"));
+        }
+      }
+    }
+    children.push(panel);
+  }
+
+  // ---------------------------------------------------------------- calendar
+  function realCalendar(children) {
+    var g = R.CAL.filter(function (x) { return x.id === rui.provider; })[0];
+    children.push(h("div", { class: "j-field" }, h("label", { id: "pick-label" }, "Which calendar do you use?"), providerList(R.CAL)));
+    if (!g) { children.push(h("p", { class: "j-hint" }, "Choose your calendar above and we’ll show you exactly what to do.")); return; }
+    var panel = h("div", { class: "j-panel", id: "real-panel" });
+    panel.appendChild(h("h2", { class: "j-sub" }, g.name));
+    panel.appendChild(guideSteps(g));
+    if (g.note) panel.appendChild(h("p", { class: "j-hint" }, g.note));
+    if (g.kind === "file") {
+      panel.appendChild(errBox());
+      panel.appendChild(fileInput(".ics,text/calendar", function (text, f) {
+        var n = R.saveCalendarFile(text, L ? L.config().timezone : "", f.name);
+        finishReal({ key: "calendar", providerId: "file", providerName: "Calendar file", detail: f.name + " · " + n + " upcoming event" + (n === 1 ? "" : "s"), at: new Date().toISOString(), live: true, route: "local" });
+      }, "Choose an .ics file"));
+    } else {
+      if (g.kind === "ics") panel.appendChild(textInput("real-url", "Calendar link", "url", { placeholder: "https://… .ics  or  webcal://…", hint: "Keep it private: anyone with this link can see the calendar." }));
+      if (g.kind === "caldav") { panel.appendChild(textInput("real-url", "CalDAV server address", "url", { placeholder: "https://caldav.example.com/" })); panel.appendChild(textInput("real-user", "Username", "username")); panel.appendChild(textInput("real-cpass", "App password", "password", { type: "password" })); }
+      if (g.kind === "calendly") panel.appendChild(textInput("real-token", "Calendly personal access token", "token", { type: "password" }));
+      panel.appendChild(errBox());
+      panel.appendChild(actionButton("Connect " + g.name, function () {
+        var v = rui.vals;
+        if (g.kind === "ics") {
+          var u = String(v.url || "").trim();
+          if (!/^(webcal:|https?:)\/\//i.test(u)) return Promise.reject(new Error("Please paste the calendar link (it starts with https:// or webcal://)."));
+          return needBackend("You can upload a calendar file instead (choose “Upload a calendar file” above) — it works without the service.").then(function () { return L.connect("calendar", g.id, g.name, "caldav", { url: u, icsOnly: true }, state.connected); });
+        }
+        if (g.kind === "caldav") {
+          if (!String(v.url || "").trim() || !String(v.username || "").trim() || !String(v.password || "")) return Promise.reject(new Error("Please fill in the server address, username and app password."));
+          return needBackend("").then(function () { return L.connect("calendar", "caldav", g.name, "caldav", { url: String(v.url).trim(), username: String(v.username).trim(), password: v.password }, state.connected); });
+        }
+        if (g.kind === "calendly") {
+          if (!String(v.token || "").trim()) return Promise.reject(new Error("Please paste your Calendly access token."));
+          return needBackend("").then(function () { return L.connect("calendar", "calendly", "Calendly", "calendly", { token: String(v.token).trim() }, state.connected); });
+        }
+        return Promise.reject(new Error("That isn’t available yet."));
+      }));
+    }
+    if (g.oauth === "google" && L && L.configured().google) { panel.appendChild(h("p", { class: "j-or" }, "or")); panel.appendChild(actionButton("Sign in with Google instead", function () { return L.connect("calendar", "google-calendar", "Google Calendar", "google", {}, state.connected); }, "btn-secondary")); }
+    if (g.oauth === "microsoft" && L && L.configured().microsoft) { panel.appendChild(h("p", { class: "j-or" }, "or")); panel.appendChild(actionButton("Sign in with Microsoft instead", function () { return L.connect("calendar", "outlook-calendar", "Outlook calendar", "microsoft", {}, state.connected); }, "btn-secondary")); }
+    children.push(panel);
+  }
+
+  // ---------------------------------------------------------------- bank statement
+  function money(n) { return E.fmtMoney(n, false); }
+  function realBank(children) {
+    var panel = h("div", { class: "j-panel", id: "real-panel" });
+    var banks = E.pickerList("bank");
+    var sel = h("select", { id: "real-bank", "aria-label": "Your bank" }, [h("option", { value: "" }, "Choose your bank (optional)…")].concat(banks.map(function (b) { return h("option", { value: b.id }, b.name); })).concat([h("option", { value: "other" }, "Another bank")]));
+    sel.value = rui.vals.bankId || "";
+    sel.addEventListener("change", function () { rui.vals.bankId = sel.value; rui.bankName = sel.options[sel.selectedIndex].text; render(); });
+    panel.appendChild(h("div", { class: "j-field" }, h("label", { for: "real-bank" }, "Which bank?"), sel));
+    var tip = R.BANK_TIPS[rui.vals.bankId];
+    panel.appendChild(h("ol", { class: "j-steps" },
+      h("li", null, tip || "In your banking app or website, find “Statements”, “Export” or “Download transactions”. Menu names change a little between versions."),
+      h("li", null, "Choose CSV (or OFX) and the last 1–3 months. Weekly, you can upload a newer one — it fills in the gap without duplicating anything."),
+      h("li", null, "Choose the file below. It’s read in your browser and stays on this device — it isn’t uploaded anywhere.")));
+    panel.appendChild(errBox());
+    panel.appendChild(fileInput(".csv,.ofx,.qfx,.txt,text/csv,application/x-ofx", function (text, f) {
+      var parsed = R.parseStatement(text, f.name);
+      rui.preview = { parsed: parsed, file: f.name }; showError(""); render();
+    }, rui.preview ? "Choose a different file" : "Choose a statement file"));
+    if (rui.preview) {
+      var p = rui.preview.parsed;
+      panel.appendChild(h("div", { class: "j-preview", role: "status" },
+        h("strong", null, "Found " + p.rows.length + " transaction" + (p.rows.length === 1 ? "" : "s")),
+        h("p", null, E.shortDate(p.from) + " to " + E.shortDate(p.to) + " · " + p.format),
+        h("p", null, "Money in " + money(p.inTotal) + " · Money out " + money(p.outTotal)),
+        p.warnings.length ? h("p", { class: "j-hint" }, p.warnings.join(" ")) : null,
+        h("ul", { class: "j-fine j-sample-rows" }, p.rows.slice(-3).reverse().map(function (r) { return h("li", null, E.shortDate(r.date) + " · " + r.desc + " · " + (r.direction === "in" ? "+" : "−") + money(r.amount)); }))));
+      panel.appendChild(actionButton("Use this statement", function () {
+        var bankName = rui.bankName && rui.vals.bankId && rui.vals.bankId !== "other" ? rui.bankName : "";
+        var r = R.saveBank(rui.preview.parsed, { file: rui.preview.file, bank: bankName });
+        var pp = rui.preview.parsed;
+        return { key: "bank", providerId: rui.vals.bankId || "statement", providerName: bankName ? bankName + " statement" : "Bank statement", detail: r.count + " transactions · latest " + E.shortDate((R.localBank().rows.slice(-1)[0] || {}).date || pp.to), at: new Date().toISOString(), live: true, route: "local" };
+      }));
+    }
+    children.push(panel);
+    children.push(h("div", { class: "j-panel j-soon" }, h("strong", null, "Live bank connection — coming soon"), h("p", { class: "j-hint" }, "Connecting straight to your bank (Open Banking) needs a regulated partner and isn’t switched on yet. We’ll never show made-up numbers in the meantime — only what you upload.")));
+  }
+
+  // ---------------------------------------------------------------- Stripe / Shopify
+  function realStripe(children) {
+    var panel = h("div", { class: "j-panel", id: "real-panel" });
+    panel.appendChild(h("ol", { class: "j-steps" },
+      h("li", null, "In Stripe, create a restricted key and give it Read access to Balance, Charges and Payouts — nothing else. ", h("a", { href: "https://dashboard.stripe.com/apikeys", target: "_blank", rel: "noopener noreferrer", class: "j-extlink" }, "Open Stripe API keys ↗")),
+      h("li", null, "Copy the key (it starts rk_live_… — or rk_test_… to try with test data) and paste it below.")));
+    panel.appendChild(textInput("real-key", "Restricted API key", "key", { type: "password", placeholder: "rk_live_…" }));
+    panel.appendChild(errBox());
+    panel.appendChild(actionButton("Connect Stripe", function () {
+      var k = String(rui.vals.key || "").trim();
+      if (!k) return Promise.reject(new Error("Please paste your restricted key."));
+      if (/^sk_/.test(k)) return Promise.reject(new Error("That’s a full secret key. For safety please create a restricted read-only key (starts rk_) and use that."));
+      if (!/^rk_(live|test)_/.test(k)) return Promise.reject(new Error("That doesn’t look like a restricted key (it should start rk_live_ or rk_test_)."));
+      return needBackend("Stripe can’t be read directly from a web page.").then(function () { return L.connect("sales:stripe", "stripe", "Stripe", "stripe", { key: k }, state.connected); });
+    }));
+    children.push(panel);
+  }
+  function realShopify(children) {
+    var panel = h("div", { class: "j-panel", id: "real-panel" });
+    panel.appendChild(h("p", { class: "j-hint" }, "Optional. Create an app in Shopify’s Dev Dashboard with the read_orders scope and install it on your store (Shopify no longer lets you make new “custom apps”). Then paste its Client ID and secret."));
+    panel.appendChild(textInput("real-shop", "Your Shopify store", "shop", { placeholder: "yourshop.myshopify.com" }));
+    panel.appendChild(textInput("real-cid", "App Client ID", "clientId"));
+    panel.appendChild(textInput("real-csec", "App Client secret", "clientSecret", { type: "password" }));
+    panel.appendChild(textInput("real-tok", "…or an existing custom app’s access token", "token", { type: "password", placeholder: "shpat_…", hint: "Only if you already have one. Use the Client ID and secret above, or this token — not both." }));
+    panel.appendChild(errBox());
+    panel.appendChild(actionButton("Connect Shopify", function () {
+      var shop = E.cleanShopifyStore(rui.vals.shop || "");
+      if (!shop) return Promise.reject(new Error("Please enter your store name, for example yourshop.myshopify.com."));
+      var v = rui.vals;
+      if (!((v.clientId && v.clientSecret) || v.token)) return Promise.reject(new Error("Please paste the app’s Client ID and secret, or an access token."));
+      return needBackend("Shopify can’t be read directly from a web page.").then(function () { return L.connect("sales:shopify", "shopify", "Shopify", "shopify", { shop: shop, token: v.token, clientId: v.clientId, clientSecret: v.clientSecret }, state.connected); });
+    }));
+    children.push(panel);
+  }
+
+  function stepItemReal() {
+    var key = single || E.queue(state)[state.cursor];
+    var item = E.ITEM_BY_KEY[key];
+    if (!item) { go("w-done"); return; }
+    var conn = state.connected[key];
+    var children = [];
+    if (!single) children.push(progress());
+    children.push(h("p", { class: "j-eyebrow" }, single ? "Add a connection" : "Connect " + (E.queue(state).indexOf(key) + 1) + " of " + E.queue(state).length));
+    children.push(h("h1", null, conn && !rui.reupload ? item.title + " connected" : (key === "mail" ? "Connect your email" : key === "calendar" ? "Connect your calendar" : key === "bank" ? "Add your bank statement" : "Connect " + item.title)));
+    children.push(h("div", { id: "real-notice" }, serviceNotice()));
+    checkCaps();
+
+    if (conn && !rui.reupload) {
+      children.push(h("div", { class: "j-success", role: "status" }, h("span", { class: "j-success-tick", "aria-hidden": "true" }, "✓"),
+        h("div", null, h("strong", null, conn.providerName + " is connected"), conn.detail ? h("p", { class: "j-hint" }, conn.detail) : null,
+          h("p", { class: "j-hint" }, conn.route === "local" ? "Kept on this device — nothing was uploaded." : "Live — showing your real data."))));
+      if (key === "bank" && conn.route === "local") children.push(h("button", { class: "btn btn-secondary j-wide j-gap", type: "button", on: { click: function () { rui.reupload = true; render(); } } }, "Upload a newer statement"));
+      children.push(h("button", { class: "btn btn-primary j-wide j-gap", type: "button", on: { click: nextAfterItem } }, single ? "Back to my dashboard" : "Continue"));
+      setRoot(card.apply(null, children));
+      return;
+    }
+    children.push(h("div", { class: "j-see" }, h("h2", null, "What we’ll see"), h("ul", { class: "j-sees" }, item.sees.map(function (t) { return h("li", null, t); })), h("p", { class: "j-fine" }, "🔒 " + item.never)));
+    if (key === "mail") realMail(children);
+    else if (key === "calendar") realCalendar(children);
+    else if (key === "bank") realBank(children);
+    else if (key === "sales:stripe") realStripe(children);
+    else if (key === "sales:shopify") realShopify(children);
+    children.push(h("div", { class: "j-secondary-row" },
+      h("button", { class: "btn btn-secondary", type: "button", on: { click: function () {
+        if (rui.reupload) { rui.reupload = false; render(); return; }
+        if (state.skipped.indexOf(key) === -1) state.skipped.push(key); save(); nextAfterItem();
+      } } }, rui.reupload ? "Cancel" : "Skip for now")));
+    children.push(h("p", { class: "j-back" }, h("button", { class: "link-btn", type: "button", on: { click: prevItem } }, "← Back")));
+    var st = window.scrollY;
+    setRoot(card.apply(null, children));
+    if (rui.keepScroll != null) { window.scrollTo(0, rui.keepScroll); rui.keepScroll = null; }
+  }
+
   function stepDone() {
     var rows = E.ITEMS.filter(function (i) { return state.selected.indexOf(i.key) !== -1 || state.connected[i.key]; });
     var left = E.setupLeft(state);
@@ -422,7 +731,7 @@
   }
   function render() {
     var params = readHash();
-    if (params.help) { overBtn.hidden = true; stepHelper(params.help, params["for"] || "Someone"); return; }
+    if (params.help) { overBtn.hidden = true; if (REAL) { setRoot(card(h("h1", null, "This helper link isn’t available"), h("p", { class: "j-lead" }, "Ask the person to connect it themselves from their own device."))); return; } stepHelper(params.help, params["for"] || "Someone"); return; }
     overBtn.hidden = state.step === "welcome" && !state.account;
     if (state.step === "welcome") state.step = "account";
     if (state.step === "app") { if (!state.business) state.step = "account"; }

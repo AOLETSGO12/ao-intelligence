@@ -594,10 +594,17 @@
     else if (rt === "imap") body = api("/imap/connect", { address: values.address || session.detail, password: values.password, host: values.host });
     else if (rt === "calendly") body = api("/calendly/connect", { token: values.token });
     else if (rt === "caldav") {
-      var u = session.detail && session.providerId === "caldav" ? session.detail : values.url;
-      body = /^(webcal:|https?:\/\/[^\s]*\.ics(\?|$))/i.test(u || "") ? api("/ics/connect", { url: u }) : api("/caldav/connect", { url: u, username: values.username, password: values.password });
+      var u = values.url || (session.providerId === "caldav" ? session.detail : "");
+      var looksIcs = /^(webcal:|https?:\/\/[^\s]*\.ics(\?|$))/i.test(u || "") || /calendar\/ical\/|\/ical\/|[?&]format=ics|private-[0-9a-f]+/i.test(u || "");
+      body = (session.icsOnly || (looksIcs && !values.username)) ? api("/ics/connect", { url: u }) : api("/caldav/connect", { url: u, username: values.username, password: values.password });
     } else return Promise.reject(new Error("That connection isn’t available live yet."));
     return body.then(function (r) { setSealed(key, rt, r.sealed); return done(r.account || session.detail); });
+  }
+  /** Real-app connect (no consent sheet): build the session and run the same completion. Must be called from a click. */
+  function connect(itemKey, providerId, providerName, rt, values, conns) {
+    var session = { itemKey: itemKey, providerId: providerId, providerName: providerName, route: rt, allConns: conns || {}, detail: (values && (values.address || values.url || values.shop)) || "", icsOnly: !!(values && values.icsOnly) };
+    if (rt === "shopify") session.detail = (values && values.shop) || "";
+    return complete(session, values || {});
   }
   function finishBackendCallback(p, session) {
     if (p.error) throw new Error(p.error === "access_denied" ? "Access wasn’t granted, so nothing was connected." : String(p.error_description || p.error).slice(0, 200));
@@ -635,6 +642,7 @@
   /** Forget one connection. `others` = the remaining connections; Google access is revoked once none still use it. */
   function disconnect(key, conn, others) {
     var t = loadTokens();
+    if (conn && conn.route === "local" && root.AOReal) { if (key === "bank") root.AOReal.clearBank(); if (key === "calendar") root.AOReal.clearCalendar(); }
     if (t.sealed) delete t.sealed[key];
     if (conn && conn.route === "google") {
       var still = !!others && Object.keys(others).some(function (k) { return k !== key && others[k].live && others[k].route === "google"; });
@@ -671,9 +679,21 @@
             return maybeAiDrafts(emails, ctx, caps).then(function (em) { out.mail = em; out.otherMessages = r.other || 0; });
           });
         });
-        else if (key === "calendar") job(key, function () {
+        else if (key === "calendar" && c.route !== "local") job(key, function () {
           var p = c.route === "google" ? fetchGoogleCalendar() : c.route === "microsoft" ? fetchOutlookCalendar() : backendData("calendar", "/data/calendar", { days: 14 }).then(function (r) { return r.events || []; });
           return p.then(function (ev) { out.calendar = ev; });
+        });
+        else if (key === "bank" && c.route === "local") job(key, function () {
+          var b = root.AOReal && root.AOReal.localBank();
+          if (!b || !b.rows || !b.rows.length) return Promise.reject(new Error("The statement on this device is empty. Upload one from Connections."));
+          out.bank = b.rows.slice(); out.extras.bankLocal = { updated: b.updated, file: b.file, count: b.rows.length };
+          return Promise.resolve();
+        });
+        else if (key === "calendar" && c.route === "local") job(key, function () {
+          var cal = root.AOReal && root.AOReal.localCalendar();
+          if (!cal) return Promise.reject(new Error("The calendar file on this device is gone. Upload it again from Connections."));
+          out.calendar = cal.events || []; out.extras.calendarLocal = { updated: cal.updated, file: cal.file };
+          return Promise.resolve();
         });
         else if (key === "bank") job(key, function () {
           return backendData("bank", "/data/bank", { days: 30 }).then(function (r) { out.bank = r.bank || []; if (r.summary) out.extras.bank = r.summary; if (r.account) out.accounts.bank = r.account; });
@@ -699,7 +719,7 @@
 
   root.AOLive = {
     config: cfg, configured: configured, redirectUri: redirectUri, route: route, backendCaps: backendCaps,
-    liveSession: liveSession, complete: complete, finishRedirect: finishRedirect, reconnect: reconnect, disconnect: disconnect,
+    liveSession: liveSession, complete: complete, connect: connect, finishRedirect: finishRedirect, reconnect: reconnect, disconnect: disconnect,
     _preload: loadGis, cancelPending: cancelPending, RESULT_KEY: RESULT_KEY, load: load, saveDraft: saveDraft, clearTokens: clearTokens, KIND_LABEL: KIND_LABEL,
     // exposed for tests
     _t: { mapGmail: mapGmail, mapGoogleEvents: mapGoogleEvents, mapGraphMail: mapGraphMail, mapGraphEvents: mapGraphEvents, parseAddress: parseAddress, decodeEntities: decodeEntities, msBuildAuthUrl: msBuildAuthUrl, fieldsFor: fieldsFor, orgFromDomain: orgFromDomain, AUTO_SENDER: AUTO_SENDER }

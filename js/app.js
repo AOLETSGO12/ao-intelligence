@@ -1,5 +1,5 @@
 /* Your day: Today / Inbox / Money / Calendar / Connections — personalised from the journey.
-   Sample data only; state is local to this device. */
+   Real data from your connections (or ?demo=1 for the sample walkthrough); state is local to this device. */
 (function () {
   "use strict";
   var E = window.AOEngine, S = window.AOStore;
@@ -16,14 +16,19 @@
     { id: "calendar", label: "Calendar", icon: "M4 6h16v14H4zM4 10h16M8 3v4M16 3v4" },
     { id: "connections", label: "Connections", icon: "M10 14a4 4 0 005.7 0l3-3a4 4 0 00-5.7-5.7l-1 1M14 10a4 4 0 00-5.7 0l-3 3a4 4 0 005.7 5.7l1-1" }
   ];
+  var REAL_KEYS = ["mail", "calendar", "bank", "sales:stripe", "sales:shopify"];
   var active = "today";
   var view, universe;
   var live = null;          // real data fetched from live connections (null until loaded)
   var loading = false;
   var L = window.AOLive;
-  var ui = { day: null, draft: {}, copied: null, saved: {}, saveErr: {} };
+  var ui = { day: null, draft: {}, copied: null, saved: {}, saveErr: {}, editTask: null, editTarget: null, addingTarget: false, editGoal: false };
+  var REAL = !S.demo;
+  if (REAL) E.ITEM_ORDER.sort(function (a, b) { var o = ["mail", "calendar", "bank", "sales:stripe", "sales:shopify"], A = o.indexOf(a), B = o.indexOf(b); return (A === -1 ? 99 : A) - (B === -1 ? 99 : B); });
+  function uid() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 6); }
 
   document.getElementById("app-biz").textContent = state.business.name;
+  document.getElementById("reset-demo").textContent = REAL ? "Start over" : "Reset demo";
   document.getElementById("reset-demo").addEventListener("click", function () {
     S.confirmReset(function () { window.location.href = "start.html"; });
   });
@@ -71,9 +76,10 @@
   function connectedCount() { return Object.keys(state.connected).length; }
   function drawBadge() {
     var b = document.getElementById("data-badge"); if (!b) return;
+    if (REAL) { b.hidden = true; return; }
     var n = connectedCount(), nl = Object.keys(state.connected).filter(function (k) { return state.connected[k].live; }).length;
-    var label = nl && nl === n ? "Live data" : nl ? "Live + sample data" : "Sample data";
-    b.textContent = label; b.className = "demo-badge" + (nl ? " is-live" : "");
+    b.hidden = false;
+    b.textContent = nl && nl === n ? "Live data" : nl ? "Live + sample data" : "Sample data"; b.className = "demo-badge" + (nl ? " is-live" : "");
   }
   function loadLive(force) {
     if (!L || !hasLive()) { live = null; loading = false; return Promise.resolve(); }
@@ -81,7 +87,7 @@
     if (loading) draw();
     return L.load(state).then(function (d) { live = d; loading = false; draw(); }).catch(function () { loading = false; draw(); });
   }
-  function pill(isLive) { return h("span", { class: "src-pill " + (isLive ? "is-live" : "is-sample") }, isLive ? "Live" : "Sample"); }
+  function pill(isLive) { if (REAL) return document.createTextNode(""); return h("span", { class: "src-pill " + (isLive ? "is-live" : "is-sample") }, isLive ? "Live" : "Sample"); }
   function liveNotices() {
     if (!view.liveErrors || !view.liveErrors.length) return null;
     var wrap = h("div", { class: "live-notices" });
@@ -142,25 +148,113 @@
     else sched.appendChild(eventList(view.todayEvents, false));
     root.appendChild(sched);
 
+    root.appendChild(REAL ? tasksCardReal() : tasksCardDemo());
+    root.appendChild(REAL ? targetsCardReal() : targetsCardDemo());
+    return root;
+  }
+
+
+  // ---------- tasks and targets ----------
+  function toggleDone(t, checked) {
+    if (t.user) {
+      var id = t.id.slice(2);
+      state.userTasks.forEach(function (u) { if (u.id === id) u.done = checked; });
+    } else {
+      var i = state.doneTasks.indexOf(t.id);
+      if (checked && i === -1) state.doneTasks.push(t.id); else if (!checked && i !== -1) state.doneTasks.splice(i, 1);
+    }
+    save(); draw();
+  }
+  function tasksCardDemo() {
     var tasks = card("Today’s tasks");
     tasks.appendChild(h("ul", { class: "task-list" }, view.tasks.map(function (t) {
       var cb = h("input", { type: "checkbox", id: "task-" + t.id, checked: t.done ? true : null, "aria-label": t.title });
-      cb.addEventListener("change", function () {
-        var i = state.doneTasks.indexOf(t.id);
-        if (cb.checked && i === -1) state.doneTasks.push(t.id); else if (!cb.checked && i !== -1) state.doneTasks.splice(i, 1);
-        save(); draw();
-      });
+      cb.addEventListener("change", function () { toggleDone(t, cb.checked); });
       return h("li", { class: "task" + (t.done ? " is-done" : "") }, cb, h("label", { for: "task-" + t.id }, t.title),
         t.tab ? h("button", { class: "link-btn", type: "button", on: { click: function () { go(t.tab); } } }, "Open") : null);
     })));
-    root.appendChild(tasks);
-
+    return tasks;
+  }
+  function tasksCardReal() {
+    var tasks = card("Tasks", view.tasks.length ? (view.tasks.filter(function (t) { return t.done; }).length + " of " + view.tasks.length + " done") : null);
+    if (!view.tasks.length) tasks.appendChild(h("p", { class: "muted" }, "Nothing here yet. Add your first task below — tasks suggested from your real emails and calendar will appear here too."));
+    tasks.appendChild(h("ul", { class: "task-list" }, view.tasks.map(function (t) {
+      var cb = h("input", { type: "checkbox", id: "task-" + t.id, checked: t.done ? true : null, "aria-label": t.title });
+      cb.addEventListener("change", function () { toggleDone(t, cb.checked); });
+      if (t.user && ui.editTask === t.id) {
+        var inp = h("input", { type: "text", class: "task-edit", value: t.title, "aria-label": "Edit task", maxlength: "200" });
+        var saveEdit = function () { var v = inp.value.trim(); if (v) state.userTasks.forEach(function (u) { if (u.id === t.id.slice(2)) u.title = v; }); ui.editTask = null; save(); draw(); };
+        inp.addEventListener("keydown", function (e) { if (e.key === "Enter") saveEdit(); if (e.key === "Escape") { ui.editTask = null; draw(); } });
+        setTimeout(function () { inp.focus(); }, 0);
+        return h("li", { class: "task is-editing" }, inp, h("button", { class: "btn btn-primary btn-small", type: "button", on: { click: saveEdit } }, "Save"), h("button", { class: "link-btn", type: "button", on: { click: function () { ui.editTask = null; draw(); } } }, "Cancel"));
+      }
+      return h("li", { class: "task" + (t.done ? " is-done" : "") }, cb, h("label", { for: "task-" + t.id }, t.title, !t.user ? h("small", { class: "task-sugg" }, " suggested") : null),
+        t.tab ? h("button", { class: "link-btn", type: "button", on: { click: function () { go(t.tab); } } }, "Open") : null,
+        t.user ? h("button", { class: "link-btn", type: "button", "aria-label": "Edit " + t.title, on: { click: function () { ui.editTask = t.id; draw(); } } }, "Edit") : null,
+        t.user ? h("button", { class: "link-btn is-danger", type: "button", "aria-label": "Remove " + t.title, on: { click: function () { state.userTasks = state.userTasks.filter(function (u) { return u.id !== t.id.slice(2); }); save(); draw(); } } }, "Remove") : null);
+    })));
+    var add = h("input", { type: "text", id: "new-task", placeholder: "Add a task, e.g. Send the sponsor deck", maxlength: "200", "aria-label": "New task", autocomplete: "off" });
+    var addIt = function () { var v = add.value.trim(); if (!v) { add.focus(); return; } state.userTasks.push({ id: uid(), title: v, done: false, created: new Date().toISOString() }); save(); draw(); var n = document.getElementById("new-task"); if (n) n.focus(); };
+    add.addEventListener("keydown", function (e) { if (e.key === "Enter") { e.preventDefault(); addIt(); } });
+    tasks.appendChild(h("div", { class: "add-row" }, add, h("button", { class: "btn btn-primary btn-small", type: "button", on: { click: addIt } }, "Add")));
+    var done = state.userTasks.filter(function (u) { return u.done; }).length;
+    if (done) tasks.appendChild(h("button", { class: "link-btn", type: "button", on: { click: function () { state.userTasks = state.userTasks.filter(function (u) { return !u.done; }); save(); draw(); } } }, "Clear " + done + " completed"));
+    return tasks;
+  }
+  function targetsCardDemo() {
     var targets = card("Targets");
     targets.appendChild(h("ul", { class: "target-list" }, view.targets.map(function (t) {
       return h("li", null, h("div", { class: "target-top" }, h("span", null, t.label), h("strong", null, t.text)), bar(t.pct));
     })));
-    root.appendChild(targets);
-    return root;
+    return targets;
+  }
+  function numField(id, label, val, step) { return h("div", { class: "j-field num-field" }, h("label", { for: id }, label), h("input", { id: id, type: "number", inputmode: "decimal", step: step || "any", value: val == null ? "" : String(val) })); }
+  function targetForm(t) {
+    var wrap = h("div", { class: "target-form" });
+    var label = h("input", { type: "text", id: "tg-label", placeholder: "e.g. Sponsor meetings booked", value: t ? t.label : "", maxlength: "80", "aria-label": "Target name" });
+    var unit = h("input", { type: "text", id: "tg-unit", placeholder: "£ or a word, optional", value: t ? t.unit : "", maxlength: "12", "aria-label": "Unit" });
+    var cur = numField("tg-cur", "So far", t ? t.current : 0), goal = numField("tg-goal", "Goal", t ? t.goal : "");
+    var err = h("p", { class: "j-error", role: "alert", hidden: true });
+    var saveIt = function () {
+      var l = label.value.trim(), c = parseFloat(cur.querySelector("input").value), g = parseFloat(goal.querySelector("input").value);
+      var bad = !l ? "Please name the target." : isNaN(g) || g <= 0 ? "Please enter a goal above zero." : isNaN(c) ? "Please enter how far you’ve got (0 is fine)." : "";
+      if (bad) { err.textContent = bad; err.hidden = false; return; }
+      if (t) state.userTargets.forEach(function (x) { if (x.id === t.id) { x.label = l; x.current = c; x.goal = g; x.unit = unit.value.trim(); } });
+      else state.userTargets.push({ id: uid(), label: l, current: c, goal: g, unit: unit.value.trim() });
+      ui.editTarget = null; ui.addingTarget = false; save(); draw();
+    };
+    wrap.appendChild(h("div", { class: "j-field" }, h("label", { for: "tg-label" }, "Target"), label));
+    wrap.appendChild(h("div", { class: "num-row" }, cur, goal, h("div", { class: "j-field" }, h("label", { for: "tg-unit" }, "Unit"), unit)));
+    wrap.appendChild(err);
+    wrap.appendChild(h("div", { class: "j-actions" }, h("button", { class: "btn btn-secondary btn-small", type: "button", on: { click: function () { ui.editTarget = null; ui.addingTarget = false; draw(); } } }, "Cancel"), h("button", { class: "btn btn-primary btn-small", type: "button", on: { click: saveIt } }, t ? "Save" : "Add target")));
+    return wrap;
+  }
+  function targetsCardReal() {
+    var card0 = card("Targets");
+    var list = h("ul", { class: "target-list" });
+    view.targets.forEach(function (t) {
+      if (t.user && ui.editTarget === t.id) { list.appendChild(h("li", null, targetForm({ id: t.id, label: t.label, current: t.current, goal: t.goal, unit: t.unit }))); return; }
+      var actions = [];
+      if (t.user) {
+        actions.push(h("button", { class: "link-btn", type: "button", on: { click: function () { ui.editTarget = t.id; ui.addingTarget = false; draw(); } } }, "Update"));
+        actions.push(h("button", { class: "link-btn is-danger", type: "button", on: { click: function () { state.userTargets = state.userTargets.filter(function (x) { return x.id !== t.id; }); save(); draw(); } } }, "Remove"));
+      } else if (t.moneyGoal) {
+        actions.push(h("button", { class: "link-btn", type: "button", on: { click: function () { ui.editGoal = true; draw(); } } }, "Change goal"));
+      }
+      list.appendChild(h("li", null, h("div", { class: "target-top" }, h("span", null, t.label), h("strong", null, t.text)), bar(t.pct), actions.length ? h("div", { class: "target-actions" }, actions) : null));
+    });
+    if (!view.targets.length) card0.appendChild(h("p", { class: "muted" }, "No targets yet. Add one below, for example “Sponsor meetings booked: 0 of 5”."));
+    card0.appendChild(list);
+    // money goal
+    if (view.revenueSource !== "none" && (!state.moneyGoal || ui.editGoal)) {
+      var gi = h("input", { type: "number", inputmode: "decimal", id: "money-goal", placeholder: "e.g. 5000", value: state.moneyGoal ? String(state.moneyGoal) : "", "aria-label": "Monthly goal in pounds" });
+      var setIt = function () { var v = parseFloat(gi.value); state.moneyGoal = v > 0 ? v : 0; ui.editGoal = false; save(); draw(); };
+      gi.addEventListener("keydown", function (e) { if (e.key === "Enter") setIt(); });
+      card0.appendChild(h("div", { class: "add-row" }, h("label", { for: "money-goal", class: "add-label" }, view.revenueSource === "bank" ? "Monthly money-in goal (£)" : "Monthly sales goal (£)"), gi, h("button", { class: "btn btn-secondary btn-small", type: "button", on: { click: setIt } }, "Set goal")));
+    }
+    if (ui.addingTarget) card0.appendChild(targetForm(null));
+    else card0.appendChild(h("button", { class: "btn btn-secondary btn-small", type: "button", on: { click: function () { ui.addingTarget = true; ui.editTarget = null; draw(); setTimeout(function () { var l = document.getElementById("tg-label"); if (l) l.focus(); }, 0); } } }, "Add a target"));
+    return card0;
   }
 
   function eventList(events, showDate) {
@@ -221,7 +315,14 @@
   // ---------- Money ----------
   function pMoney() {
     var v = view, root = h("div");
-    root.appendChild(pageHead("Money", v.revenueSource === "none" ? "Money in, money out and what’s owed" : (v.revenueSource === "sales" ? "Sales" + (v.flags.bank ? " and money in" : "") : "Money in and out") + " · last 30 days · " + (v.revenueSource === "sales" ? (v.live.sales ? "live data" : "sample data") : v.revenueSource === "bank" ? (v.live.bank ? "live data" : "sample data") : "sample data")));
+    root.appendChild(pageHead("Money", v.revenueSource === "none" ? "Money in, money out and what’s owed" : (v.revenueSource === "sales" ? "Sales" + (v.flags.bank ? " and money in" : "") : "Money in and out") + " · last 30 days · " + (REAL ? "your own data" : v.revenueSource === "sales" ? (v.live.sales ? "live data" : "sample data") : v.revenueSource === "bank" ? (v.live.bank ? "live data" : "sample data") : "sample data")));
+    if (REAL && v.flags.bank) {
+      var bl = v.extras.bankLocal;
+      root.appendChild(h("div", { class: "j-notice" + (v.bankStale ? " is-warn" : ""), role: "note" },
+        h("strong", null, "Bank statement kept on this device. "),
+        v.bankLatest ? "Latest transaction: " + E.shortDate(v.bankLatest) + (v.bankStale ? " — that’s a few days ago, so “today” figures will look quiet until you upload a newer statement. " : ". ") : "",
+        h("a", { href: "start.html#connect=bank", class: "j-extlink" }, "Upload a newer statement →")));
+    }
     if (v.revenueSource === "none") {
       root.appendChild(card("Today at a glance", null, empty(v.kpiEmpty, "Connect your bank", "connections")));
     } else {
@@ -269,7 +370,8 @@
       bd.appendChild(h("div", { class: "bd-cols" }, col("Money in", b.ins, b.totalIn, "bar-in"), col("Money out", b.outs, b.totalOut, "bar-out")));
     }
     root.appendChild(bd);
-    // invoices
+    // invoices (needs an accounts tool, which isn't available yet — don't show an empty promise in the real app)
+    if (!REAL) {
     var inv = card(universe.flavor.invoiceWord.replace(/^./, function (c) { return c.toUpperCase(); }) + "s", v.flags.books ? v.booksNames.join(", ") : null);
     if (!v.invoices) inv.appendChild(empty("Connect Xero, QuickBooks or FreeAgent to see who owes you and for how long.", "Connect accounts", "connections"));
     else {
@@ -279,6 +381,7 @@
       })));
     }
     root.appendChild(inv);
+    }
     // activity
     var act = card("Recent activity");
     if (!v.activity.length) act.appendChild(empty(v.activityEmpty, "Connect something", "connections"));
@@ -321,7 +424,8 @@
       root.appendChild(h("button", { class: "app-nudge", type: "button", on: { click: function () { window.location.href = "start.html#connect"; } } }, h("strong", null, "Finish setup (" + view.setupLeft + " left)"), h("span", null, "Continue where you left off →")));
     }
     E.GROUPS.forEach(function (g) {
-      var rows = E.connectionRows(state).filter(function (r) { return r.item.group === g; });
+      var rows = E.connectionRows(state).filter(function (r) { return r.item.group === g && (!REAL || REAL_KEYS.indexOf(r.item.key) !== -1); });
+      if (!rows.length) return;
       var c = card(g);
       c.appendChild(h("div", { class: "conn-list" }, rows.map(function (r) {
         var it = r.item;
@@ -331,7 +435,7 @@
         else action = h("button", { class: "btn btn-secondary btn-small", type: "button", on: { click: function () { window.location.href = "start.html#connect=" + encodeURIComponent(it.key); } } }, it.picker ? "Choose & connect" : "Connect " + it.title);
         return h("div", { class: "conn-row" + (r.conn ? " is-on" : "") },
           h("span", { class: "conn-badge", "aria-hidden": "true" }, name.charAt(0)),
-          h("div", { class: "conn-main" }, h("strong", null, name), h("small", null, r.conn ? (r.conn.live ? "Connected live" : "Connected (sample data)") + (r.conn.detail ? " · " + r.conn.detail : "") : it.short)),
+          h("div", { class: "conn-main" }, h("strong", null, name), h("small", null, r.conn ? (REAL ? (r.conn.route === "local" ? "Kept on this device" : "Connected") : r.conn.live ? "Connected live" : "Connected (sample data)") + (r.conn.detail ? " · " + r.conn.detail : "") : it.short)),
           r.conn ? pill(!!r.conn.live) : null,
           r.status === "pending" ? h("span", { class: "status-pill is-pending" }, "To do") : null, action);
       })));
@@ -343,9 +447,16 @@
     var other = card("Something else? Tell us", null, note,
       h("button", { class: "btn btn-secondary btn-small", type: "button", on: { click: function () { state.requests.other = note.value.trim() || undefined; save(); saved.textContent = "Noted — thank you."; } } }, "Send"), saved);
     root.appendChild(other);
-    root.appendChild(card("Demo controls", null,
-      h("p", { class: "muted" }, "Want to run the journey again from the beginning?"),
-      h("button", { class: "btn btn-secondary btn-small", type: "button", on: { click: function () { S.confirmReset(function () { window.location.href = "start.html"; }); } } }, "Reset demo")));
+    if (REAL) {
+      var sums = [];
+      root.appendChild(card("Your data", null,
+        h("p", { class: "muted" }, "Everything this app keeps — your tasks, targets, statement, calendar file and connection details — lives only in this browser on this device. Start over erases all of it."),
+        h("button", { class: "btn btn-secondary btn-small", type: "button", on: { click: function () { S.confirmReset(function () { window.location.href = "start.html"; }); } } }, "Start over")));
+    } else {
+      root.appendChild(card("Demo controls", null,
+        h("p", { class: "muted" }, "Want to run the journey again from the beginning?"),
+        h("button", { class: "btn btn-secondary btn-small", type: "button", on: { click: function () { S.confirmReset(function () { window.location.href = "start.html"; }); } } }, "Reset demo")));
+    }
     return root;
   }
 
