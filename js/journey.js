@@ -442,7 +442,7 @@
       box.appendChild(h("p", null, "It’s a separate password, just for this app, so your real password stays private. You can delete it any time. " + (p.why || "Your provider doesn’t let other apps use your main password.")));
     }
     if (p.steps && p.steps.length) box.appendChild(h("ol", { class: "j-steps" }, p.steps.map(function (st) { return h("li", null, st); })));
-    if (p.href && p.button) box.appendChild(h("a", { class: "btn btn-primary j-wide j-extbtn", href: p.href, target: "_blank", rel: "noopener noreferrer" }, p.button + " ↗"));
+    if (p.href && p.button) box.appendChild(h("a", { class: "btn btn-primary j-wide j-extbtn", href: (g.id === "zoho-mail" && rui.zohoAccounts) ? rui.zohoAccounts : p.href, target: "_blank", rel: "noopener noreferrer" }, p.button + " ↗"));
     if (p.kind !== "normal") box.appendChild(h("p", { class: "j-passtip" }, "Copy and paste it here, spaces don’t matter."));
     if (p.extra) box.appendChild(h("p", { class: "j-hint" }, p.extra));
     return box;
@@ -502,7 +502,7 @@
   function providerList(list, onPick) {
     return h("div", { class: "j-results j-results-open", role: "listbox", "aria-label": "Choose one" }, list.map(function (p) {
       var on = rui.provider === p.id;
-      return h("button", { class: "j-result" + (on ? " is-on" : ""), type: "button", role: "option", "aria-selected": on ? "true" : "false", on: { click: function () { var y = window.pageYOffset; rui.provider = p.id; rui.error = ""; rui.notice = ""; rui.hostNote = ""; delete rui.vals.host; delete rui.vals.url; delete rui.vals.password; onPick && onPick(p); render(); window.scrollTo(0, y); var pn = document.getElementById("real-panel"); if (pn && pn.scrollIntoView) { try { pn.scrollIntoView({ block: "start", behavior: "smooth" }); } catch (x) { pn.scrollIntoView(); } } } } },
+      return h("button", { class: "j-result" + (on ? " is-on" : ""), type: "button", role: "option", "aria-selected": on ? "true" : "false", on: { click: function () { var y = window.pageYOffset; rui.provider = p.id; rui.error = ""; rui.notice = ""; rui.hostNote = ""; rui.zohoAccounts = ""; rui.detecting = ""; delete rui.vals.host; delete rui.vals.url; delete rui.vals.password; onPick && onPick(p); render(); window.scrollTo(0, y); var pn = document.getElementById("real-panel"); if (pn && pn.scrollIntoView) { try { pn.scrollIntoView({ block: "start", behavior: "smooth" }); } catch (x) { pn.scrollIntoView(); } } } } },
         h("span", null, p.name), on ? h("span", { class: "j-result-tick", "aria-hidden": "true" }, "✓") : null);
     }));
   }
@@ -553,6 +553,28 @@
     return ready;
   }
 
+  function lookUpHost(g, addr) {
+    addr = normEmail(addr);
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(addr)) return;
+    if (!(g.id === "zoho-mail" || g.id === "gmx" || g.other)) return;
+    if (!L || !L.detectImap) return;
+    if (rui.detecting === addr) return;
+    rui.detecting = addr;
+    L.detectImap(addr).then(function (r) {
+      if (normEmail(rui.vals.address) !== addr) return;
+      if (r && r.accounts) rui.zohoAccounts = r.accounts;
+      if (r && r.host) {
+        var typed = String(rui.vals.host || "").trim();
+        var def = g.host || "";
+        if (!typed || typed === def) rui.vals.host = r.host;
+        else if (typed !== r.host) { /* keep a host the person typed themselves */ }
+        if (r.kind === "zoho" && /imappro/.test(r.host || rui.vals.host || "")) rui.hostNote = "Using " + (rui.vals.host || r.host) + " (Zoho organisation server, from your domain’s mail records). We’ll try the others if this one doesn’t accept the sign-in.";
+        else if (r.host) rui.hostNote = "Using " + (rui.vals.host || r.host) + ".";
+        render();
+      }
+    }, function () { if (rui.detecting === addr) rui.detecting = ""; });
+  }
+
   /** Address + app password (or password) over IMAP. Mail only — calendars have their own step. */
   function imapPanel(g, children, opts) {
     opts = opts || {};
@@ -562,8 +584,16 @@
     if (g.note && !opts.nested) panel.appendChild(h("p", { class: "j-hint" }, g.note));
     var normal = g.pass && g.pass.kind === "normal";
     panel.appendChild(textInput("real-addr", "Your email address", "address", { type: "email", inputmode: "email", autocomplete: "email", placeholder: "you@example.com", value: rui.vals.address || (state.account ? state.account.email : "") }));
+    var addrEl = panel.querySelector("#real-addr");
+    if (addrEl) {
+      var schedule = function () { lookUpHost(g, addrEl.value); };
+      addrEl.addEventListener("blur", schedule);
+      addrEl.addEventListener("change", schedule);
+      if (addrEl.value) setTimeout(schedule, 0);
+    }
     panel.appendChild(textInput("real-pass", g.other ? "Password or app password" : (normal ? "Email password" : "App password"), "password", { type: "password", placeholder: g.id === "gmail" ? "16-letter code" : (g.id === "icloud-mail" ? "abcd-efgh-ijkl-mnop" : ""), hint: "Sent over an encrypted connection, sealed, and kept only in this browser." }));
-    var host = textInput("real-host", "Mail server (IMAP)", "host", { value: rui.vals.host != null ? rui.vals.host : g.host, placeholder: "imap.example.com", hint: "Port 993 (SSL). " + (g.other ? "We can look it up for you, or type it in." : "Already filled in — only change it if your provider says otherwise.") });
+    var hostHint = g.other ? "We can look it up for you, or type it in." : (g.id === "zoho-mail" ? "We’ll try the right Zoho server automatically if this one doesn’t work, including organisation servers and other data centres." : "Already filled in — only change it if your provider says otherwise.");
+    var host = textInput("real-host", "Mail server (IMAP)", "host", { value: rui.vals.host != null ? rui.vals.host : g.host, placeholder: "imap.example.com", hint: "Port 993 (SSL). " + hostHint });
     if (g.other) {
       panel.appendChild(host);
       panel.appendChild(h("button", { class: "btn btn-secondary j-wide", type: "button", id: "real-detect", on: { click: function () {
@@ -582,6 +612,7 @@
       } } }, "Find my settings"));
       if (rui.hostNote) panel.appendChild(h("p", { class: "j-hint", role: "status" }, rui.hostNote));
     } else panel.appendChild(h("details", { class: "j-details" }, h("summary", null, "Server settings"), host));
+    if (rui.hostNote && !g.other) panel.appendChild(h("p", { class: "j-hint", role: "status" }, rui.hostNote));
     panel.appendChild(errBox());
     var label = "Connect " + (g.other ? "my email" : g.name);
     panel.appendChild(actionButton(label, function () {

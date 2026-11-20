@@ -276,13 +276,13 @@
           "Paste your AOL address and that password below."
         ] } },
     { id: "zoho-mail", name: "Zoho Mail", host: "imap.zoho.com",
-      pass: { kind: "app", button: "Open Zoho’s app password page", href: "https://accounts.zoho.eu/home#security/app_password",
+      pass: { kind: "app", button: "Open Zoho’s app password page", href: "https://accounts.zoho.uk/home#security/app_password",
         why: "Zoho doesn’t let other apps use your main password. IMAP also has to be switched on.",
         steps: [
-          "In Zoho Mail, go to Settings → Mail Accounts → IMAP Access and switch IMAP on.",
-          "Open Zoho’s app password page with the button below (Europe). If your account is in the US or elsewhere, use accounts.zoho.com instead.",
+          "In Zoho Mail, go to Settings, then Mail Accounts, then IMAP Access, and switch IMAP on.",
+          "Open Zoho’s app password page with the button below. Use the page for your data centre: accounts.zoho.uk for the UK, accounts.zoho.eu for Europe, accounts.zoho.com for the US.",
           "Create an application-specific password called “AO Intelligence” and copy it.",
-          "Paste your Zoho address and that password below. European accounts use the server imap.zoho.eu — we’ll fill that in from your address."
+          "Paste your Zoho address and that password below. We’ll pick the right mail server automatically — including organisation servers such as imappro.zoho.uk — and try other data centres if needed."
         ] } },
     { id: "fastmail", name: "Fastmail", host: "imap.fastmail.com",
       pass: { kind: "app", button: "Open Fastmail’s app password page", href: "https://app.fastmail.com/settings/security/apps",
@@ -391,7 +391,7 @@
   /** Best-guess IMAP server from an address, for instant pre-fill (the AO service does a fuller lookup). */
   function guessHost(address) {
     var d = String(address || "").split("@")[1]; d = d ? d.toLowerCase().trim() : "";
-    var rules = [[/^(gmail|googlemail)\.com$/, "imap.gmail.com"], [/^(icloud|me|mac)\.com$/, "imap.mail.me.com"], [/^(yahoo|ymail|rocketmail)\./, "imap.mail.yahoo.com"], [/^sky\.(com|co\.uk)$/, "imap.mail.yahoo.com"], [/^(btinternet|btopenworld)\.com$/, "mail.btinternet.com"], [/^(virginmedia|ntlworld|blueyonder)\./, "imap.virginmedia.com"], [/^(aol|aim)\.com$/, "imap.aol.com"], [/^gmx\.(net|de|at|ch)$/, "imap.gmx.net"], [/^gmx\./, "imap.gmx.com"], [/^zoho\.eu$/, "imap.zoho.eu"], [/^zoho(mail)?\.com$/, "imap.zoho.com"], [/^(fastmail\.(com|fm))$/, "imap.fastmail.com"]];
+    var rules = [[/^(gmail|googlemail)\.com$/, "imap.gmail.com"], [/^(icloud|me|mac)\.com$/, "imap.mail.me.com"], [/^(yahoo|ymail|rocketmail)\./, "imap.mail.yahoo.com"], [/^sky\.(com|co\.uk)$/, "imap.mail.yahoo.com"], [/^(btinternet|btopenworld)\.com$/, "mail.btinternet.com"], [/^(virginmedia|ntlworld|blueyonder)\./, "imap.virginmedia.com"], [/^(aol|aim)\.com$/, "imap.aol.com"], [/^gmx\.(net|de|at|ch)$/, "imap.gmx.net"], [/^gmx\./, "imap.gmx.com"], [/^(zoho|zohomail)\.uk$/, "imap.zoho.uk"], [/^zoho\.eu$|^zohomail\.eu$/, "imap.zoho.eu"], [/^(zoho|zohomail)\.com\.au$/, "imap.zoho.com.au"], [/^(zoho|zohomail)\.in$/, "imap.zoho.in"], [/^(zoho|zohomail)\.jp$/, "imap.zoho.jp"], [/^zohocloud\.ca$/, "imap.zohocloud.ca"], [/^(zoho|zohomail)\.sa$/, "imap.zoho.sa"], [/^zoho(mail)?\.com$/, "imap.zoho.com"], [/^(fastmail\.(com|fm))$/, "imap.fastmail.com"]];
     for (var i = 0; i < rules.length; i++) if (rules[i][0].test(d)) return rules[i][1];
     return "";
   }

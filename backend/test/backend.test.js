@@ -400,3 +400,102 @@ test("caldav/connect normalises the email and strips spaces from the app passwor
   assert.ok(seen.length);
   assert.equal(seen[0], "name@icloud.com:abcdefgh-ijklmnop");
 });
+
+test("imap/detect and host fallback: Zoho data centres, including UK custom domains", async () => {
+  const { detectImap } = await import("../src/detect.js");
+  const { candidateImapHosts, zohoFromMx, loginErrorFor } = await import("../src/imap-hosts.js");
+  const none = async () => { throw new Error("no network"); };
+  assert.equal((await detectImap(none, "a@zoho.uk")).host, "imap.zoho.uk");
+  assert.equal((await detectImap(none, "a@zoho.eu")).host, "imap.zoho.eu");
+  assert.equal((await detectImap(none, "a@zoho.com")).host, "imap.zoho.com");
+  assert.equal((await detectImap(none, "a@zoho.com.au")).host, "imap.zoho.com.au");
+  assert.equal(zohoFromMx("mx.zoho.uk").id, "uk");
+  assert.equal(zohoFromMx("mx2.zoho.uk").id, "uk");
+  assert.equal(zohoFromMx("mx.zoho.eu").id, "eu");
+  assert.equal(zohoFromMx("mx.zoho.com.au").id, "au");
+  assert.equal(zohoFromMx("mx.zoho.com").id, "us");
+
+  const mxUk = async (url) => {
+    if (String(url).includes("type=MX") && String(url).includes("archieowenracing.com")) {
+      return new Response(JSON.stringify({ Answer: [
+        { type: 15, data: "10 mx.zoho.uk." },
+        { type: 15, data: "20 mx2.zoho.uk." },
+        { type: 15, data: "50 mx3.zoho.uk." },
+      ] }));
+    }
+    throw new Error("no network " + url);
+  };
+  const found = await detectImap(mxUk, "archie@archieowenracing.com");
+  assert.equal(found.host, "imappro.zoho.uk");
+  assert.equal(found.kind, "zoho");
+  assert.equal(found.dc, "uk");
+  assert.match(found.accounts, /accounts\.zoho\.uk/);
+
+  const hosts = candidateImapHosts({ host: "imap.zoho.com", address: "archie@archieowenracing.com", detected: found });
+  assert.equal(hosts[0], "imappro.zoho.uk");
+  assert.equal(hosts[1], "imap.zoho.uk");
+  assert.ok(hosts.includes("imappro.zoho.eu") && hosts.includes("imap.zoho.eu"));
+  assert.ok(hosts.includes("imappro.zoho.com") && hosts.includes("imap.zoho.com"));
+  assert.ok(hosts.indexOf("imappro.zoho.uk") < hosts.indexOf("imappro.zoho.eu"));
+  assert.ok(hosts.indexOf("imappro.zoho.eu") < hosts.indexOf("imappro.zoho.com"));
+
+  const personal = candidateImapHosts({ host: "imap.zoho.com", address: "a@zoho.com", detected: { host: "imap.zoho.com", kind: "zoho", dc: "us" } });
+  assert.deepEqual(personal, ["imap.zoho.com", "imappro.zoho.com"]);
+
+  const gmx = candidateImapHosts({ host: "imap.gmx.com", address: "a@gmx.de", detected: { host: "imap.gmx.net", kind: "gmx" } });
+  assert.equal(gmx[0] === "imap.gmx.net" || gmx.includes("imap.gmx.net"), true);
+  assert.ok(gmx.includes("imap.gmx.com") && gmx.includes("imap.gmx.net"));
+
+  const err = loginErrorFor({ address: "archie@archieowenracing.com", detected: found });
+  assert.equal(err.status, 401);
+  assert.match(err.message, /IMAP Access/);
+  assert.match(err.message, /Settings, then Mail Accounts, then IMAP Access/);
+  assert.match(err.message, /accounts\.zoho\.uk\/home#security\/app_password/);
+});
+
+test("imap/connect tries Zoho organisation then personal hosts and keeps the one that works", async () => {
+  const { unseal } = await import("../src/seal.js");
+  const fake = await startFakeImap({ user: "archie@archieowenracing.com", pass: "app-pass", messages: [] });
+  const tried = [];
+  const fetchImpl = async (url) => {
+    if (String(url).includes("type=MX") && String(url).includes("archieowenracing.com")) {
+      return new Response(JSON.stringify({ Answer: [
+        { type: 15, data: "10 mx.zoho.uk." },
+        { type: 15, data: "20 mx2.zoho.uk." },
+        { type: 15, data: "50 mx3.zoho.uk." },
+      ] }));
+    }
+    throw new Error("no " + url);
+  };
+  const { HttpError } = await import("../src/util.js");
+  const h = createHandler({
+    fetchImpl,
+    openImap: async (host) => {
+      tried.push(host);
+      if (host === "imappro.zoho.uk") return nodeSocket(fake.port);
+      throw new HttpError(401, "The mail server didn’t accept those details.", "login");
+    },
+  });
+  const r = await call(h, ENV, "/imap/connect", { method: "POST", body: { address: "archie@archieowenracing.com", password: "app-pass", host: "imap.zoho.com" } });
+  assert.equal(r.status, 200);
+  const j = await r.json();
+  const creds = await unseal(ENV.SEAL_KEY, j.sealed);
+  assert.equal(creds.host, "imappro.zoho.uk");
+  assert.deepEqual(tried, ["imappro.zoho.uk"]);
+  fake.close();
+
+  const triedAll = [];
+  const h2 = createHandler({
+    fetchImpl,
+    openImap: async (host) => { triedAll.push(host); throw new HttpError(401, "nope", "login"); },
+  });
+  const fail = await call(h2, ENV, "/imap/connect", { method: "POST", body: { address: "archie@archieowenracing.com", password: "wrong-pass", host: "imap.zoho.com" } });
+  assert.equal(fail.status, 401);
+  const fj = await fail.json();
+  assert.match(fj.error, /IMAP Access/);
+  assert.match(fj.error, /accounts\.zoho\.uk\/home#security\/app_password/);
+  assert.equal(triedAll[0], "imappro.zoho.uk");
+  assert.equal(triedAll[1], "imap.zoho.uk");
+  assert.ok(triedAll.includes("imappro.zoho.eu") && triedAll.includes("imappro.zoho.com"));
+  assert.ok(triedAll.length >= 6);
+});

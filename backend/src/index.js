@@ -20,6 +20,7 @@ import * as ST from "./stripe.js";
 import * as SH from "./shopify.js";
 import { aiDrafts } from "./ai.js";
 import { detectImap } from "./detect.js";
+import { candidateImapHosts, loginErrorFor, isRetryableImapError } from "./imap-hosts.js";
 
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -65,12 +66,36 @@ export function caps(env) {
 }
 
 export function createHandler({ fetchImpl = fetch, openImap = (host) => connectTls(host, 993) } = {}) {
-  async function withImap(creds, fn) {
+  async function withImap(creds, fn, opts = {}) {
     assertPublicHost(creds.host);
     const sock = await openImap(creds.host);
-    const c = new ImapClient(sock);
+    const c = new ImapClient(sock, { timeoutMs: opts.timeoutMs || 20000 });
     try { await c.greeting(); await c.login(creds.user, creds.pass); return await fn(c); }
     finally { await c.logout(); }
+  }
+
+  async function connectImap(address, password, host) {
+    const detected = await detectImap(fetchImpl, address).catch(() => ({ host: "", kind: "" }));
+    const hosts = candidateImapHosts({ host, address, detected });
+    if (!hosts.length) throw new HttpError(400, "Please enter your mail server (for example imap.example.com).");
+    let last;
+    for (let i = 0; i < hosts.length; i++) {
+      const h = hosts[i];
+      const creds = { host: h, user: address, pass: password };
+      try {
+        await withImap(creds, async () => {}, { timeoutMs: i === 0 ? 15000 : 8000 });
+        try { console.log(JSON.stringify({ ev: "imap-connect", host: h, tried: i + 1 })); } catch (e) { /* ignore */ }
+        return creds;
+      } catch (e) {
+        last = e;
+        try { console.log(JSON.stringify({ ev: "imap-try", host: h, status: e && e.status, code: e && e.code })); } catch (x) { /* ignore */ }
+        if (!isRetryableImapError(e) || i === hosts.length - 1) {
+          if (e && (e.code === "login" || e.status === 401)) throw loginErrorFor({ address, detected, host: h });
+          throw e;
+        }
+      }
+    }
+    throw loginErrorFor({ address, detected, host });
   }
 
   async function route(request, env) {
@@ -164,8 +189,7 @@ export function createHandler({ fetchImpl = fetch, openImap = (host) => connectT
       if (!body.password) throw new HttpError(400, "Please enter the app password.");
       const host = String(body.host || "").trim().toLowerCase();
       if (!host) throw new HttpError(400, "Please enter your mail server (for example imap.example.com).");
-      const creds = { host, user: address, pass: String(body.password) };
-      await withImap(creds, async () => {});
+      const creds = await connectImap(address, String(body.password), host);
       return json(env, request, { sealed: await seal(env.SEAL_KEY, { t: "imap", ...creds }), account: address });
     }
     if (path === "/ics/connect") {
