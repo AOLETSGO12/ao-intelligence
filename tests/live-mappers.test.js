@@ -126,3 +126,47 @@ test("business forward is empty-safe and motorsport-aware", () => {
   personal.business = { name: "Home", type: "personal", industry: "other" };
   assert.equal(E.buildForward(u, personal, "2026-11-20", {}, {}, {}), null);
 });
+
+test("marking an email done uses stable keys and drops it from every view", () => {
+  const s = E.parseState(null);
+  s.real = true;
+  s.business = { name: "Archie Owen Racing", type: "business", industry: "motorsport" };
+  s.account = { name: "Archie Owen", email: "archie@archieowenracing.com" };
+  s.connected = { mail: { providerName: "Zoho", live: true, route: "imap", detail: "archie@archieowenracing.com" } };
+  const mail = {
+    id: "i:17", from: "Sam Hill", org: "Apex", subject: "Sponsorship call", snippet: "Can we talk about next season?",
+    when: "Today", when_iso: "2026-11-20T09:00:00.000Z",
+    drafts: [{ label: "Draft", body: "Hi Sam" }], live: true,
+    meta: { provider: "imap", messageId: 17, address: "sam@apexlube.co.uk", subject: "Sponsorship call", rfcId: "<abc@mail.x>" }
+  };
+  const live = { mail: [mail], filed: [], otherMessages: 2, accounts: { mail: "archie@archieowenracing.com" } };
+  const u = E.universeOf(s, "2026-11-20", live);
+  let v = E.buildView(u, s, "09:00", live);
+  assert.equal(v.emails.length, 1);
+  s.dailyOverview = { date: v.today, summary: "One message needs a reply.", categories: { reply: { count: 1, ids: ["i:17"], blurb: "1 waiting" }, invoices: { count: 0, ids: [] }, bookings: { count: 0, ids: [] }, newsletters: { count: 0, ids: [] } }, actions: [{ id: "reply:i:17", title: "Reply to Sam", tab: "inbox" }] };
+  v = E.buildView(u, s, "09:00", live);
+  assert.equal(v.dailyOverview.categories.reply.count, 1);
+
+  E.markCompleted(s, mail, "archie@archieowenracing.com");
+  const keys = E.completionKeys(mail, "archie@archieowenracing.com");
+  assert.ok(keys.indexOf("i:17") !== -1);
+  assert.ok(keys.some((k) => k.indexOf("mid:") === 0));
+  assert.ok(keys.some((k) => k.indexOf("h:") === 0));
+  assert.ok(E.isCompleted(mail, s, "archie@archieowenracing.com"));
+  // same message, different mutable id, same Message-ID — still done
+  const again = Object.assign({}, mail, { id: "i:99", meta: Object.assign({}, mail.meta, { messageId: 99 }) });
+  assert.ok(E.isCompleted(again, s, "archie@archieowenracing.com"));
+
+  v = E.buildView(u, s, "09:00", live);
+  assert.equal(v.emails.length, 0);
+  assert.equal(v.completed.length, 1);
+  assert.equal(v.dailyOverview.categories.reply.count, 0);
+  assert.ok(!/one message needs a reply/i.test(v.dailyOverview.summary));
+  assert.equal((v.dailyOverview.actions || []).length, 0);
+  assert.equal(v.forward.pipeline.length, 0);
+  assert.ok(!v.tasks.some((t) => t.id === "reply:i:17"));
+
+  E.unmarkCompleted(s, mail, "archie@archieowenracing.com");
+  v = E.buildView(u, s, "09:00", live);
+  assert.equal(v.emails.length, 1);
+});

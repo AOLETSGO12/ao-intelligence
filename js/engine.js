@@ -58,6 +58,14 @@ var AOEngine = (() => {
     buildAgenda: () => buildAgenda,
     buildForward: () => buildForward,
     logActivity: () => logActivity,
+    completionKeys: () => completionKeys,
+    isCompleted: () => isCompleted,
+    markCompleted: () => markCompleted,
+    unmarkCompleted: () => unmarkCompleted,
+    mailAccount: () => mailAccount,
+    pruneOverview: () => pruneOverview,
+    lineFromCategories: () => lineFromCategories,
+    categoriesFromEmails: () => categoriesFromEmails,
     time12: () => time12,
     todayIso: () => todayIso,
     universeOf: () => universeOf,
@@ -1074,6 +1082,125 @@ var AOEngine = (() => {
     return { kind: "flat", text: "Similar to yesterday" };
   }
 
+
+  function mailAccount(s, liveData) {
+    return String((liveData && liveData.accounts && liveData.accounts.mail) || (s && s.account && s.account.email) || (s && s.connected && s.connected.mail && s.connected.mail.detail) || "").trim();
+  }
+  function normMsgId(s) { return String(s || "").replace(/[<>\s]/g, "").toLowerCase(); }
+  function simpleHash(str) {
+    var h = 5381;
+    for (var i = 0; i < str.length; i++) h = ((h << 5) + h) + str.charCodeAt(i);
+    return (h >>> 0).toString(36);
+  }
+  function completionKeys(m, account) {
+    if (!m) return [];
+    var acct = String(account || "").toLowerCase();
+    var keys = [];
+    var rfc = m.meta && m.meta.rfcId;
+    if (rfc && !/^\d+$/.test(String(rfc).trim())) keys.push("mid:" + acct + ":" + normMsgId(rfc));
+    if (m.id) keys.push(String(m.id));
+    if (m.meta && m.meta.messageId != null && String(m.meta.messageId) !== "") {
+      keys.push("uid:" + acct + ":" + String(m.meta.provider || "") + ":" + String(m.meta.messageId));
+    }
+    var from = String((m.meta && m.meta.address) || m.from || "").toLowerCase().replace(/\s+/g, "");
+    var subj = String((m.meta && m.meta.subject) || m.subject || "").replace(/^(re|fwd?):/ig, "").trim().toLowerCase();
+    var date = String(m.when_iso || "").slice(0, 16) || String(m.when || "");
+    keys.push("h:" + acct + ":" + simpleHash(from + "|" + subj + "|" + date));
+    var seen = {};
+    return keys.filter(function (k) { if (!k || seen[k]) return false; seen[k] = 1; return true; });
+  }
+  function isCompleted(m, s, account) {
+    var done = (s && s.replied) || [];
+    if (!done.length || !m) return false;
+    var keys = completionKeys(m, account != null ? account : mailAccount(s));
+    for (var i = 0; i < keys.length; i++) if (done.indexOf(keys[i]) !== -1) return true;
+    return false;
+  }
+  function markCompleted(s, m, account) {
+    if (!s || !m) return;
+    s.replied = s.replied || [];
+    completionKeys(m, account != null ? account : mailAccount(s)).forEach(function (k) {
+      if (s.replied.indexOf(k) === -1) s.replied.push(k);
+    });
+    s.doneTasks = s.doneTasks || [];
+    var tid = "reply:" + m.id;
+    if (s.doneTasks.indexOf(tid) === -1) s.doneTasks.push(tid);
+  }
+  function unmarkCompleted(s, m, account) {
+    if (!s || !m) return;
+    var keys = completionKeys(m, account != null ? account : mailAccount(s));
+    s.replied = (s.replied || []).filter(function (k) { return keys.indexOf(k) === -1; });
+    var tid = "reply:" + m.id;
+    s.doneTasks = (s.doneTasks || []).filter(function (k) { return k !== tid; });
+  }
+  function categoriesFromEmails(list) {
+    var ids = { reply: [], invoices: [], bookings: [], newsletters: [] };
+    (list || []).forEach(function (e) {
+      if (!e.noReply) ids.reply.push(e.id);
+      var c = classifyEmail(e);
+      if (c === "invoice") ids.invoices.push(e.id);
+      else if (c === "booking") ids.bookings.push(e.id);
+      else if (c === "newsletter") ids.newsletters.push(e.id);
+    });
+    function pack(arr, one, many, empty) {
+      return { count: arr.length, ids: arr, blurb: arr.length ? (arr.length === 1 ? one : many.replace("{n}", String(arr.length))) : empty };
+    }
+    return {
+      reply: pack(ids.reply, "A message is waiting for a reply.", "{n} messages are waiting for a reply.", "Nothing needs a reply."),
+      invoices: pack(ids.invoices, "An invoice or payment message is in your recent mail.", "{n} invoice or payment messages in your recent mail.", "No invoices or payments in the recent mail."),
+      bookings: pack(ids.bookings, "A booking or appointment message.", "{n} booking or appointment messages.", "No booking or appointment messages."),
+      newsletters: pack(ids.newsletters, "One newsletter or notification was filed.", "{n} newsletters or notifications were filed.", "No newsletters filed.")
+    };
+  }
+  function lineFromCategories(cats, todayEventCount) {
+    cats = cats || {};
+    var reply = (cats.reply && cats.reply.count) || 0;
+    var inv = (cats.invoices && cats.invoices.count) || 0;
+    var book = (cats.bookings && cats.bookings.count) || 0;
+    var news = (cats.newsletters && cats.newsletters.count) || 0;
+    var ev = todayEventCount || 0;
+    var bits = [];
+    if (reply) bits.push(reply === 1 ? "one message needs a reply" : reply + " messages need a reply");
+    if (inv) bits.push(inv === 1 ? "one invoice or payment item" : inv + " invoice or payment items");
+    if (book) bits.push(book === 1 ? "one booking to look at" : book + " bookings to look at");
+    if (ev) bits.push(ev === 1 ? "one thing in the diary today" : ev + " things in the diary today");
+    if (news && !bits.length) bits.push("only newsletters and notifications — nothing urgent");
+    if (!bits.length) return "A quiet day so far — nothing waiting that needs you.";
+    if (bits.length === 1) return "A straightforward day: " + bits[0] + ".";
+    return "Today: " + bits.slice(0, -1).join(", ") + " and " + bits[bits.length - 1] + ".";
+  }
+  function overviewCountSig(cats) {
+    cats = cats || {};
+    return ["reply", "invoices", "bookings", "newsletters"].map(function (k) { return k + ":" + ((cats[k] && cats[k].count) || 0); }).join(",");
+  }
+  function actionIsCompleted(a, s, emails, account) {
+    if (!a) return false;
+    var raw = String(a.id || "").replace(/^reply:/, "");
+    if ((s.replied || []).indexOf(raw) !== -1 || (s.replied || []).indexOf(a.id) !== -1) return true;
+    for (var i = 0; i < (emails || []).length; i++) {
+      var e = emails[i];
+      if ((e.id === raw || e.id === a.id || ("reply:" + e.id) === a.id) && isCompleted(e, s, account)) return true;
+    }
+    return false;
+  }
+  function pruneOverview(ov, s, emails, account, todayEventCount) {
+    if (!ov) return null;
+    var open = (emails || []).filter(function (e) { return !isCompleted(e, s, account); });
+    var cats = categoriesFromEmails(open);
+    var sig = overviewCountSig(cats);
+    var actions = ((ov.actions) || []).filter(function (a) { return !actionIsCompleted(a, s, emails, account); });
+    var summary;
+    if (ov.countSig == null) {
+      var incoming = overviewCountSig(ov.categories || {});
+      summary = (incoming === sig && ov.summary) ? ov.summary : lineFromCategories(cats, todayEventCount);
+    } else if (ov.countSig === sig && ov.summary) {
+      summary = ov.summary;
+    } else {
+      summary = lineFromCategories(cats, todayEventCount);
+    }
+    return Object.assign({}, ov, { categories: cats, actions: actions, summary: summary, countSig: sig });
+  }
+
   function classifyEmail(m) {
     if (classifyNoReply(m) === "receipt" || /\b(invoice|vat|payment due|overdue|please pay|payout|receipt)\b/i.test(String((m && m.subject) || "") + " " + String((m && (m.body || m.snippet)) || ""))) return "invoice";
     const skip = classifyNoReply(m);
@@ -1167,7 +1294,8 @@ var AOEngine = (() => {
   function buildForward(u, s, today, flags, extras, moneyBits) {
     if ((s.business && s.business.type) === "personal") return null;
     const motor = /motor|racing|f4|athlete/i.test(((s.business && s.business.industry) || "") + " " + ((s.business && s.business.name) || ""));
-    const waiting = (u.emails || []).filter((e) => (s.replied || []).indexOf(e.id) === -1 && !e.noReply);
+    const acct = mailAccount(s);
+    const waiting = (u.emails || []).filter((e) => !isCompleted(e, s, acct) && !e.noReply);
     const pipeline = waiting.filter(sponsorLike).map((e) => {
       const days = ageDays(e, today);
       return { id: e.id, from: e.from, org: e.org, subject: e.subject, quiet: days >= 7, days };
@@ -1190,7 +1318,7 @@ var AOEngine = (() => {
     const labels = motor
       ? { pipeline: "Sponsor and partner pipeline", events: "Upcoming tests, races and travel", money: "Money", content: "Content and social", goals: "Goals and targets" }
       : { pipeline: "People waiting on you", events: "Coming up", money: "Money", content: "Follow-up", goals: "Goals and targets" };
-    const actions = ((s.dailyOverview && s.dailyOverview.date === today && s.dailyOverview.actions) || []).filter((a) => (s.dismissedActions || []).indexOf(a.id) === -1).map((a) => Object.assign({}, a, { title: (s.actionEdits && s.actionEdits[a.id]) || a.title }));
+    const actions = ((s.dailyOverview && s.dailyOverview.date === today && s.dailyOverview.actions) || []).filter((a) => (s.dismissedActions || []).indexOf(a.id) === -1 && !actionIsCompleted(a, s, u.emails, acct)).map((a) => Object.assign({}, a, { title: (s.actionEdits && s.actionEdits[a.id]) || a.title }));
     return { motor, pipeline, upcoming, money, content, labels, actions };
   }
   function logActivity(s, today, kind, title, detail) {
@@ -1285,7 +1413,10 @@ var AOEngine = (() => {
     act.sort((a, b) => a.sort < b.sort ? 1 : -1);
     const activity = act.slice(0, 10).map((a) => ({ when: a.when, time: a.time, title: a.title, desc: a.desc, source: a.source, amount: a.amount, direction: a.direction }));
     const activityEmpty = !flags.any ? "Connect your bank or a sales tool to see recent activity here." : "";
-    const unreplied = flags.mail ? u.emails.filter((e) => s.replied.indexOf(e.id) === -1) : [];
+    const acct = mailAccount(s, liveData);
+    const allMail = (u.emails || []).concat(u.filed || []);
+    const completed = flags.mail ? allMail.filter((e) => isCompleted(e, s, acct)) : [];
+    const unreplied = flags.mail ? u.emails.filter((e) => !isCompleted(e, s, acct)) : [];
     const emails = unreplied.map((e) => Object.assign({}, e, { draftBody: (i) => { if (e.noReply || !e.drafts || !e.drafts.length) return s.edits[e.id + ":" + i] !== void 0 ? s.edits[e.id + ":" + i] : ""; const d = e.drafts[i] || e.drafts[0]; return s.edits[e.id + ":" + i] !== void 0 ? s.edits[e.id + ":" + i] : (d && d.body) || ""; } }));
     const events = flags.calendar ? u.events.slice().sort((a, b) => a.date + a.start < b.date + b.start ? -1 : 1) : [];
     const todayEvents = events.filter((e) => e.date === today);
@@ -1337,7 +1468,7 @@ var AOEngine = (() => {
     }
     const left = setupLeft(s);
     const agenda = buildAgenda(todayEvents, nowHHMM, s.places || [], s.eventPlaces || {});
-    const filed = (u.filed || []).filter((e) => (s.replied || []).indexOf(e.id) === -1);
+    const filed = (u.filed || []).filter((e) => !isCompleted(e, s, acct));
     const forward = buildForward(u, s, today, flags, liveData && liveData.extras, { invoices });
     const overview = buildOverview(u, flags, { revenueSource, salesDay, countDay, inDay, today, yest, invoices, unreplied, nextEvent, todayEvents, unit, units, salesNames });
     const teasers = [];
@@ -1377,7 +1508,8 @@ var AOEngine = (() => {
       agenda,
       forward,
       agentActivity: s.activityLog || [],
-      dailyOverview: s.dailyOverview && s.dailyOverview.date === today ? s.dailyOverview : null,
+      completed,
+      dailyOverview: s.dailyOverview && s.dailyOverview.date === today ? pruneOverview(s.dailyOverview, s, allMail, acct, todayEvents.length) : null,
       overviewPrefs: s.overviewPrefs || { time: "07:00", showReply: true, showInvoices: true, showBookings: true, showNewsletters: true },
       tasks: shownTasks,
       targets,
