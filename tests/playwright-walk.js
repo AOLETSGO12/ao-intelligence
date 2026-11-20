@@ -46,7 +46,10 @@ async function run(engineName, engine, label, ctxOpts) {
     await p.locator('#real-addr').first().fill(addr); await p.locator('#real-pass').first().fill(pw);
     if (host) await p.locator('#real-host').first().fill(host);
     const before = apiReqs.length;
-    await tap(btn(/^Connect (iCloud mail|Yahoo|AOL|Zoho|Fastmail|GMX|BT|Sky|Virgin|my email|with)|^Connect (Gmail|iCloud)/i));
+    // Prefer the connect button inside the form panel (or the nested app-password fallback for Gmail).
+    const panel = (await p.locator('#real-fallback').count()) ? p.locator('#real-fallback') : p.locator('#real-panel');
+    const connect = panel.locator('button.btn-primary').filter({ visible: true }).first();
+    await tap(connect);
     await p.waitForFunction(re => new RegExp(re).test(document.body.innerText), expectRe.source, { timeout: 25000 }).catch(() => {});
     const tt = await txt(); const mine = apiReqs.slice(before).join(', ');
     ok(expectRe.test(tt) && (!PROXY_LIVE || /POST \/imap\/connect 401/.test(mine)), label + ' → friendly wrong-password message (' + (mine || 'no request') + ')');
