@@ -36,6 +36,13 @@
     try { root.localStorage.setItem(KEY, JSON.stringify(s)); } catch (e) { /* ignore */ }
   }
   function reset() {
+    try {
+      var s = load();
+      if (root.AOLive) {
+        Object.keys(s.connected || {}).forEach(function (k) { if (s.connected[k].live) root.AOLive.disconnect(k, s.connected[k]); });
+        root.AOLive.clearTokens();
+      }
+    } catch (e) { /* ignore */ }
     try { root.localStorage.removeItem(KEY); } catch (e) { /* ignore */ }
   }
   function baseUrl() {
@@ -59,7 +66,7 @@
     var back = h("div", { class: "j-modal-back is-open", role: "presentation" });
     var dlg = h("div", { class: "j-modal", role: "dialog", "aria-modal": "true", "aria-label": "Reset demo", tabindex: "-1" },
       h("h2", null, "Start over?"),
-      h("p", null, "This clears the demo account, your business, and every connection on this device, and takes you back to the beginning. Nothing was ever sent anywhere."),
+      h("p", null, "This clears your account, your business and every connection on this device — including any live sign-ins kept in this browser (we also ask Google to revoke access) — and takes you back to the beginning. To fully remove access you can also revoke AO Intelligence in your provider’s security settings."),
       h("div", { class: "j-actions" },
         h("button", { class: "btn btn-secondary", type: "button", on: { click: function () { document.body.removeChild(back); } } }, "Keep going"),
         h("button", { class: "btn btn-primary", type: "button", on: { click: function () { reset(); onYes(); } } }, "Reset demo")));

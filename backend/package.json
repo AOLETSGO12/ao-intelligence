@@ -1,0 +1,15 @@
+{
+  "name": "ao-intelligence-api",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Backend for AO Intelligence: the parts that need a secret or a server (IMAP mail, Open Banking, Stripe, Shopify, CalDAV, .ics, Calendly). Runs on Cloudflare Workers (free tier is fine). It stores nothing: credentials are sealed (encrypted) and handed back to the browser.",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "test": "node --test test/*.test.js"
+  },
+  "devDependencies": {
+    "wrangler": "^4.0.0"
+  }
+}

@@ -1,0 +1,21 @@
+# Cloudflare Worker for AO Intelligence. NOT deployed yet — see backend/README.md.
+name = "ao-intelligence-api"
+main = "src/index.js"
+compatibility_date = "2025-01-01"
+
+[vars]
+# Where the website lives. The Worker only answers browsers from this origin,
+# and only sends people back to pages under FRONTEND_URL after a sign-in.
+ALLOWED_ORIGIN = "https://aoletsgo12.github.io"
+FRONTEND_URL = "https://aoletsgo12.github.io/ao-intelligence"
+# "sandbox" while testing (TrueLayer's mock bank), "live" once you have a production licence/partner.
+TRUELAYER_ENV = "sandbox"
+# Set to "1" only for local development so http://localhost can call the Worker.
+ALLOW_LOCALHOST = "0"
+
+# Secrets (set with `npx wrangler secret put NAME`, never put them in this file):
+#   SEAL_KEY                      long random string — encrypts the credentials handed back to the browser
+#   TRUELAYER_CLIENT_ID / TRUELAYER_CLIENT_SECRET
+#   STRIPE_CONNECT_CLIENT_ID / STRIPE_SECRET_KEY            (optional: Stripe Connect sign-in)
+#   SHOPIFY_API_KEY / SHOPIFY_API_SECRET                    (optional: Shopify OAuth install)
+#   AI_API_URL / AI_API_KEY / AI_MODEL                      (optional: smarter reply drafts; any chat-completions-style endpoint)

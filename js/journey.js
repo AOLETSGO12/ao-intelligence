@@ -196,7 +196,8 @@
   }
 
   function runConnect(item, providerId, value, onDone, onError) {
-    C.startConnection(item.key, { providerId: providerId, field: value }).then(function (session) {
+    C.startConnection(item.key, { providerId: providerId, field: value, conns: state.connected }).then(function (session) {
+      var values = {};
       var close;
       var body = h("div", { class: "j-modal-body" });
       var dlg = h("div", { class: "j-modal j-provider", role: "dialog", "aria-modal": "true", "aria-label": "Connect " + session.providerName, tabindex: "-1" }, body);
@@ -204,22 +205,41 @@
         S.clear(body);
         body.appendChild(h("div", { class: "j-prov-head" },
           h("span", { class: "j-prov-badge", "aria-hidden": "true" }, session.providerName.charAt(0)),
-          h("div", null, h("p", { class: "j-prov-name" }, session.providerName), h("p", { class: "j-prov-sub" }, "wants to share read-only access with AO Intelligence"))));
+          h("div", null, h("p", { class: "j-prov-name" }, session.providerName), h("p", { class: "j-prov-sub" }, session.live ? "Live connection — your real account" : "wants to share read-only access with AO Intelligence"))));
         body.appendChild(h("ul", { class: "j-sees" }, item.sees.map(function (t) { return h("li", null, t); })));
         body.appendChild(h("p", { class: "j-fine" }, session.consent));
+        var inputs = {};
+        (session.fields || []).forEach(function (f) {
+          var inp = h("input", { id: "sf-" + f.key, type: f.type || "text", placeholder: f.placeholder || "", value: values[f.key] != null ? values[f.key] : (f.value || ""), autocomplete: f.type === "password" ? "new-password" : "off", autocapitalize: "none", spellcheck: "false" });
+          inp.addEventListener("input", function () { values[f.key] = inp.value; });
+          if (values[f.key] == null && f.value) values[f.key] = f.value;
+          inputs[f.key] = inp;
+          body.appendChild(field("sf-" + f.key, f.label, inp, f.hint));
+        });
+        var missing = h("p", { class: "j-error", role: "alert", hidden: true });
+        body.appendChild(missing);
         body.appendChild(h("div", { class: "j-actions" },
           h("button", { class: "btn btn-secondary", type: "button", on: { click: function () { close(); } } }, "Cancel"),
-          h("button", { class: "btn btn-primary", type: "button", on: { click: approve } }, "Allow access")));
-        body.appendChild(h("p", { class: "j-demo-note" }, "Demo screen — no real sign-in. ",
+          h("button", { class: "btn btn-primary", type: "button", on: { click: function () {
+            for (var i = 0; i < (session.fields || []).length; i++) {
+              var f = session.fields[i];
+              if (f.required && !String(values[f.key] || "").trim()) { missing.hidden = false; missing.textContent = "Please fill in “" + f.label + "”."; inputs[f.key].focus(); return; }
+            }
+            approve();
+          } } }, session.live ? "Allow access" : "Allow access")));
+        if (session.live) body.appendChild(h("p", { class: "j-demo-note" }, "🔒 Read-only. We never send email, and you can disconnect any time from Connections."));
+        else body.appendChild(h("p", { class: "j-demo-note" }, (session.liveNote || "Demo screen — no real sign-in. ") + " ",
           h("button", { class: "link-btn", type: "button", on: { click: fail } }, "Simulate a problem")));
       }
       function working(text) {
         S.clear(body);
-        body.appendChild(h("div", { class: "j-working", role: "status" }, h("span", { class: "j-spinner", "aria-hidden": "true" }), h("p", null, text)));
+        body.appendChild(h("div", { class: "j-working", role: "status" }, h("span", { class: "j-spinner", "aria-hidden": "true" }), h("p", null, text),
+          session.live ? h("p", { class: "j-hint" }, "A sign-in window should have opened. If you closed it by mistake, cancel and try again.") : null,
+          session.live ? h("button", { class: "link-btn", type: "button", on: { click: function () { if (window.AOLive) window.AOLive.cancelPending(); } } }, "Cancel") : null));
       }
       function approve() {
         working("Connecting to " + session.providerName + "…");
-        C.completeConnection(session).then(function (conn) { close(); onDone(conn); }).catch(function (err) { problem(err.message); });
+        C.completeConnection(session, values).then(function (conn) { close(); onDone(conn); }).catch(function (err) { problem(err.message); });
       }
       function fail() {
         working("Connecting to " + session.providerName + "…");
@@ -255,7 +275,7 @@
     if (conn) {
       children.push(h("div", { class: "j-success", role: "status" }, h("span", { class: "j-success-tick", "aria-hidden": "true" }, "✓"),
         h("div", null, h("strong", null, conn.providerName + " is connected"), conn.detail ? h("p", { class: "j-hint" }, conn.detail) : null,
-          h("p", { class: "j-hint" }, "Showing sample data for this demo."))));
+          h("p", { class: "j-hint" }, conn.live ? "Live — showing your real data." : "Showing sample data (this connection isn’t live)."))));
       children.push(h("button", { class: "btn btn-primary j-wide", type: "button", on: { click: nextAfterItem } }, single ? "Back to my dashboard" : "Continue"));
       setRoot(card.apply(null, children));
       return;

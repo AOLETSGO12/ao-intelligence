@@ -52,6 +52,7 @@ var AOEngine = (() => {
     setupLeft: () => setupLeft,
     shortDate: () => shortDate,
     startConnection: () => startConnection,
+    templateDrafts: () => templateDrafts,
     time12: () => time12,
     todayIso: () => todayIso,
     universeOf: () => universeOf,
@@ -846,8 +847,43 @@ var AOEngine = (() => {
     const b = s.business || { name: "Your business", industry: "other", size: "small" };
     return { name: b.name, industry: b.industry, size: b.size, owner: s.account ? s.account.name : "" };
   }
-  function universeOf(s, today) {
-    return generateUniverse(profileOf(s), today || todayIso());
+  function roundUpTarget(total) {
+    const t = Math.max(500, total * 1.1);
+    const step = t > 2e4 ? 1e3 : 100;
+    return Math.ceil(t / step) * step;
+  }
+  function universeOf(s, today, live) {
+    const u = generateUniverse(profileOf(s), today || todayIso());
+    const c = s.connected;
+    const flags = { mail: !!(c.mail && c.mail.live), calendar: !!(c.calendar && c.calendar.live), bank: !!(c.bank && c.bank.live), sales: Object.keys(c).some((k) => k.indexOf("sales:") === 0 && c[k].live) };
+    if (!flags.mail && !flags.calendar && !flags.bank && !flags.sales) return u;
+    const L = live || {};
+    u.live = flags;
+    if (flags.mail) {
+      u.emails = L.mail || [];
+      u.otherMessages = L.otherMessages || 0;
+    }
+    if (flags.calendar) u.events = L.calendar || [];
+    if (flags.bank) u.bank = L.bank || [];
+    if (flags.sales) {
+      u.orders = (L.orders || []).slice();
+    }
+    const since = addDays(u.today, -29);
+    const sumIn = (u.bank || []).filter((t) => t.direction === "in" && t.date >= since).reduce((a, t) => a + t.amount, 0);
+    const sumSales = (u.orders || []).filter((o) => o.date >= since).reduce((a, o) => a + o.total, 0);
+    if (flags.sales) u.monthTarget = roundUpTarget(sumSales);
+    else if (flags.bank) u.monthTarget = roundUpTarget(sumIn);
+    return u;
+  }
+  function templateDrafts(m, owner, business) {
+    const first = (m.from || "").replace(/<.*$/, "").trim().split(/\s+/)[0] || "there";
+    const me = (owner || "").trim().split(/\s+/)[0] || "";
+    const sign = "Kind regards,\n" + (owner || business || "");
+    const q = /\?|can you|could you|would you|please|let me know|availab|quote|price|how much/i.test(m.subject + " " + m.snippet);
+    return [
+      { label: "Quick reply", body: "Hi " + first + ",\n\nThanks for your message" + (m.subject ? " about \u201C" + m.subject.replace(/^(re|fwd?):\s*/i, "") + "\u201D" : "") + ". " + (q ? "I\u2019ve seen your question and will come back to you with a proper answer shortly." : "I\u2019ve got it and will get back to you shortly.") + "\n\n" + sign },
+      { label: "Ask for details", body: "Hi " + first + ",\n\nThanks for getting in touch. To make sure I give you the right answer, could you send over a little more detail \u2014 what you need, by when, and anything else that would help?\n\nOnce I have that I\u2019ll reply properly" + (me ? "" : "") + ".\n\n" + sign }
+    ];
   }
   function wait(ms) {
     return new Promise((r) => setTimeout(r, ms));
@@ -958,7 +994,7 @@ var AOEngine = (() => {
     if (pct < -0.5) return { kind: "down", text: "Down " + Math.round(Math.abs(pct)) + "% vs yesterday" };
     return { kind: "flat", text: "Similar to yesterday" };
   }
-  function buildView(u, s, nowHHMM) {
+  function buildView(u, s, nowHHMM, liveData) {
     const c = s.connected;
     const salesKeys = Object.keys(c).filter((k) => k.indexOf("sales:") === 0);
     const booksKeys = Object.keys(c).filter((k) => k.indexOf("books:") === 0);
@@ -976,7 +1012,7 @@ var AOEngine = (() => {
       u.orders.forEach((o) => {
         let h = 0;
         for (let i = 0; i < o.id.length; i++) h = h * 31 + o.id.charCodeAt(i) >>> 0;
-        orders.push(Object.assign({ source: salesNames[h % salesNames.length] }, o));
+        orders.push(Object.assign({}, o, { source: o.source || salesNames[h % salesNames.length] }));
       });
     }
     const bankTx = flags.bank ? u.bank : [];
@@ -1111,7 +1147,13 @@ var AOEngine = (() => {
       overview,
       teasers,
       setupLeft: left,
-      sample: "Sample data"
+      sample: "Sample data",
+      live: u.live || { mail: false, calendar: false, bank: false, sales: false },
+      anyLive: !!u.live,
+      liveErrors: Object.keys(liveData && liveData.errors || {}).map((k) => ({ key: k, message: liveData.errors[k] })),
+      liveAccounts: liveData && liveData.accounts || {},
+      extras: liveData && liveData.extras || {},
+      reauth: liveData && liveData.reauth || {}
     };
   }
   function buildOverview(u, flags, x) {

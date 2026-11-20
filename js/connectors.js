@@ -223,11 +223,37 @@
    *       encrypted, and return only the connection record (never tokens) to the browser.
    * ------------------------------------------------------------------ */
   function startConnection(itemKey, options) {
-    if (!root.AOEngine) return Promise.reject(new Error("The setup engine did not load."));
-    return root.AOEngine.startConnection(itemKey, options || {});
+    options = options || {};
+    var E = root.AOEngine, L = root.AOLive;
+    if (!E) return Promise.reject(new Error("The setup engine did not load."));
+    // Demo path: always available, always labelled as sample data.
+    if (!L || options.simulateFailure) return E.startConnection(itemKey, options);
+    return L.route(itemKey, options.providerId).then(function (r) {
+      // The engine validates what was typed (store name, email address, link) and builds the session.
+      return E.startConnection(itemKey, options).then(function (session) {
+        if (!r.route) {
+          session.live = false;
+          var cfgd = L.configured();
+          session.liveNote = r.reason
+            ? r.reason + " This uses sample data."
+            : (cfgd.google || cfgd.microsoft || cfgd.backend ? "Live connection isn’t switched on for this one yet — this shows sample data." : "Demo screen — live connections aren’t switched on for this site yet, so this shows sample data.");
+          return session;
+        }
+        return L.backendCaps().then(function (caps) {
+          var ls = L.liveSession(itemKey, options.providerId || itemKey, session.providerName, r.route, options.field, caps);
+          Object.keys(ls).forEach(function (k) { session[k] = ls[k]; });
+          session.isDemo = false;
+          session.allConns = options.conns || {};
+          if (r.route === "google") { try { root.AOLive._preload(); } catch (e) { /* ignore */ } }
+          return session;
+        });
+      });
+    });
   }
-  function completeConnection(session) {
+  /** Call straight from the "Allow access" click: live sign-in windows need a real click. */
+  function completeConnection(session, values) {
     if (!root.AOEngine) return Promise.reject(new Error("The setup engine did not load."));
+    if (session && session.live && root.AOLive) return root.AOLive.complete(session, values || {});
     return root.AOEngine.completeConnection(session);
   }
 

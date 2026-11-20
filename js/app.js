@@ -18,7 +18,10 @@
   ];
   var active = "today";
   var view, universe;
-  var ui = { day: null, draft: {}, copied: null };
+  var live = null;          // real data fetched from live connections (null until loaded)
+  var loading = false;
+  var L = window.AOLive;
+  var ui = { day: null, draft: {}, copied: null, saved: {}, saveErr: {} };
 
   document.getElementById("app-biz").textContent = state.business.name;
   document.getElementById("reset-demo").addEventListener("click", function () {
@@ -27,9 +30,9 @@
 
   function save() { S.save(state); }
   function compute() {
-    universe = E.universeOf(state);
+    universe = E.universeOf(state, undefined, live || undefined);
     var d = new Date();
-    view = E.buildView(universe, state, String(d.getHours()).padStart(2, "0") + ":" + String(d.getMinutes()).padStart(2, "0"));
+    view = E.buildView(universe, state, String(d.getHours()).padStart(2, "0") + ":" + String(d.getMinutes()).padStart(2, "0"), live || undefined);
     if (!ui.day) ui.day = view.today;
   }
   function icon(path) {
@@ -56,9 +59,43 @@
     draw(); window.scrollTo(0, 0);
   }
   function draw() {
-    compute(); drawTabs();
+    compute(); drawTabs(); drawBadge();
     S.clear(panel);
-    panel.appendChild({ today: pToday, inbox: pInbox, money: pMoney, calendar: pCalendar, connections: pConnections }[active]());
+    if (loading && hasLive()) { panel.appendChild(h("div", { class: "app-loading", role: "status" }, h("span", { class: "j-spinner", "aria-hidden": "true" }), h("p", null, "Fetching your live data…"))); return; }
+    var root = { today: pToday, inbox: pInbox, money: pMoney, calendar: pCalendar, connections: pConnections }[active]();
+    var notices = liveNotices();
+    if (notices) root.insertBefore(notices, root.firstChild && root.firstChild.nextSibling);
+    panel.appendChild(root);
+  }
+  function hasLive() { return Object.keys(state.connected).some(function (k) { return state.connected[k].live; }); }
+  function connectedCount() { return Object.keys(state.connected).length; }
+  function drawBadge() {
+    var b = document.getElementById("data-badge"); if (!b) return;
+    var n = connectedCount(), nl = Object.keys(state.connected).filter(function (k) { return state.connected[k].live; }).length;
+    var label = nl && nl === n ? "Live data" : nl ? "Live + sample data" : "Sample data";
+    b.textContent = label; b.className = "demo-badge" + (nl ? " is-live" : "");
+  }
+  function loadLive(force) {
+    if (!L || !hasLive()) { live = null; loading = false; return Promise.resolve(); }
+    loading = !live || force === "block";
+    if (loading) draw();
+    return L.load(state).then(function (d) { live = d; loading = false; draw(); }).catch(function () { loading = false; draw(); });
+  }
+  function pill(isLive) { return h("span", { class: "src-pill " + (isLive ? "is-live" : "is-sample") }, isLive ? "Live" : "Sample"); }
+  function liveNotices() {
+    if (!view.liveErrors || !view.liveErrors.length) return null;
+    var wrap = h("div", { class: "live-notices" });
+    view.liveErrors.forEach(function (e) {
+      var rt = view.reauth[e.key];
+      var item = E.ITEM_BY_KEY[e.key];
+      wrap.appendChild(h("div", { class: "live-notice", role: "alert" },
+        h("p", null, h("strong", null, (item ? item.title : e.key) + ": "), e.message),
+        rt ? h("button", { class: "btn btn-primary btn-small", type: "button", on: { click: function (ev) {
+          var b = ev.currentTarget; b.disabled = true; b.textContent = "Opening sign-in…";
+          L.reconnect(rt, state.connected).then(function () { return loadLive("block"); }).catch(function (err) { b.disabled = false; b.textContent = "Reconnect"; e.message = err.message; draw(); });
+        } } }, "Reconnect") : h("button", { class: "btn btn-secondary btn-small", type: "button", on: { click: function () { loadLive("block"); } } }, "Try again")));
+    });
+    return wrap;
   }
   function go(tab) { setTab(tab); }
 
@@ -99,6 +136,7 @@
     })));
 
     var sched = card("Today’s schedule", view.flags.calendar ? view.calendarName : null);
+    if (view.flags.calendar) sched.querySelector(".panel-head").appendChild(pill(view.live.calendar));
     if (!view.flags.calendar) sched.appendChild(empty("Connect your calendar to see today’s meetings and events.", "Connect calendar", "connections"));
     else if (!view.todayEvents.length) sched.appendChild(h("p", { class: "muted" }, "Nothing in your calendar today."));
     else sched.appendChild(eventList(view.todayEvents, false));
@@ -128,7 +166,7 @@
   function eventList(events, showDate) {
     return h("ul", { class: "event-list" }, events.map(function (e) {
       return h("li", { class: "event kind-" + e.kind },
-        h("div", { class: "event-time" }, e.kind === "deadline" ? "Due" : E.time12(e.start), e.kind !== "deadline" && e.end !== e.start ? h("small", null, "to " + E.time12(e.end)) : null),
+        h("div", { class: "event-time" }, e.allDay ? "All day" : e.kind === "deadline" ? "Due" : E.time12(e.start), !e.allDay && e.kind !== "deadline" && e.end !== e.start ? h("small", null, "to " + E.time12(e.end)) : null),
         h("div", null, h("strong", null, e.title), h("small", null, (showDate ? E.whenLabel(e.date, view.today) + " · " : "") + (e.place || (e.kind === "deadline" ? "Deadline" : "")))));
     }));
   }
@@ -136,9 +174,10 @@
   // ---------- Inbox ----------
   function pInbox() {
     var root = h("div");
-    root.appendChild(pageHead("Inbox", view.flags.mail ? view.mailName + " · replies waiting for you" : "Emails that need a reply, with drafts ready"));
+    root.appendChild(pageHead("Inbox", view.flags.mail ? view.mailName + (view.liveAccounts.mail ? " (" + view.liveAccounts.mail + ")" : "") + " · replies waiting for you" : "Emails that need a reply, with drafts ready"));
+    if (view.flags.mail) root.querySelector(".app-head").appendChild(pill(view.live.mail));
     if (!view.flags.mail) { root.appendChild(card(null, null, empty("Connect your email to see which messages need a reply — we’ll have a draft ready for each one. Nothing is ever sent without your approval.", "Connect email", "connections"))); return root; }
-    root.appendChild(h("p", { class: "overview-intro" }, "We looked through " + (view.otherMessages + view.emailTotal) + " recent messages. " + (view.emails.length ? view.emails.length + " need a reply from you; the rest are handled or don’t need you." : "None need a reply — you’re all caught up.")));
+    root.appendChild(h("p", { class: "overview-intro" }, "We looked through " + (view.otherMessages + view.emailTotal) + " recent " + (view.live.mail ? "real " : "") + "messages. " + (view.emails.length ? view.emails.length + " need a reply from you; the rest are handled or don’t need you." : "None need a reply — you’re all caught up.")));
     if (!view.emails.length) { root.appendChild(card(null, null, empty("All caught up. New emails that need a reply will appear here."))); return root; }
     view.emails.forEach(function (m) { root.appendChild(emailCard(m)); });
     return root;
@@ -162,6 +201,10 @@
           var url = "mailto:?subject=" + encodeURIComponent("Re: " + m.subject) + "&body=" + encodeURIComponent(ta.value);
           window.location.href = url;
         } } }, "Open in email"),
+        m.live && m.meta ? h("button", { class: "btn btn-secondary btn-small", type: "button", disabled: ui.saved[m.id] ? true : null, on: { click: function (ev) {
+          var b = ev.currentTarget; b.disabled = true; b.textContent = "Saving…"; ui.saveErr[m.id] = "";
+          L.saveDraft(m, ta.value, state.connected).then(function (r) { ui.saved[m.id] = r; draw(); }).catch(function (err) { ui.saveErr[m.id] = err.message; if (err.reauth) { /* shown by banner on next refresh */ } draw(); });
+        } } }, ui.saved[m.id] ? "Saved ✓" : "Save as draft in " + ({ google: "Gmail", microsoft: "Outlook", imap: "your mailbox" }[m.meta.provider])) : null,
         h("button", { class: "btn btn-secondary btn-small", type: "button", on: { click: function (ev) {
           var b = ev.currentTarget;
           S.copyText(ta.value).then(function () { b.textContent = "Copied ✓"; setTimeout(function () { b.textContent = "Copy"; }, 1500); });
@@ -169,14 +212,16 @@
         h("button", { class: "btn btn-ghost btn-small", type: "button", on: { click: function () {
           state.replied.push(m.id); if (state.doneTasks.indexOf("reply:" + m.id) === -1) state.doneTasks.push("reply:" + m.id); save(); draw();
         } } }, "Mark as replied")),
-      h("p", { class: "j-fine" }, "You can edit the draft above. Nothing is sent from here — “Open in email” hands it to your own mail app."));
+      ui.saveErr[m.id] ? h("p", { class: "j-error j-block", role: "alert" }, ui.saveErr[m.id]) : null,
+      ui.saved[m.id] ? h("p", { class: "j-fine", role: "status" }, "Saved to " + ui.saved[m.id].where + ". Nothing has been sent — open it there to review and send." + (ui.saved[m.id].url ? " " : ""), ui.saved[m.id].url ? h("a", { href: ui.saved[m.id].url, target: "_blank", rel: "noopener" }, "Open drafts ↗") : null) : null,
+      h("p", { class: "j-fine" }, "You can edit the draft above. Nothing is sent from here — " + (m.live ? "drafts are saved to your mailbox for you to review, and " : "") + "“Open in email” hands it to your own mail app."));
     return el;
   }
 
   // ---------- Money ----------
   function pMoney() {
     var v = view, root = h("div");
-    root.appendChild(pageHead("Money", v.revenueSource === "none" ? "Money in, money out and what’s owed" : (v.revenueSource === "sales" ? "Sales" + (v.flags.bank ? " and money in" : "") : "Money in and out") + " · last 30 days · sample data"));
+    root.appendChild(pageHead("Money", v.revenueSource === "none" ? "Money in, money out and what’s owed" : (v.revenueSource === "sales" ? "Sales" + (v.flags.bank ? " and money in" : "") : "Money in and out") + " · last 30 days · " + (v.revenueSource === "sales" ? (v.live.sales ? "live data" : "sample data") : v.revenueSource === "bank" ? (v.live.bank ? "live data" : "sample data") : "sample data")));
     if (v.revenueSource === "none") {
       root.appendChild(card("Today at a glance", null, empty(v.kpiEmpty, "Connect your bank", "connections")));
     } else {
@@ -186,6 +231,17 @@
       })));
       if (v.revenueSource === "sales" && !v.flags.bank) root.appendChild(h("p", { class: "overview-intro" }, "Add your bank to see money in and out alongside your sales."));
       if (v.revenueSource === "bank") root.appendChild(h("p", { class: "overview-intro" }, "No sales tool is connected, so “revenue” here is the money arriving in your bank. Add a sales or payments tool to see orders too."));
+    }
+    if (v.live.sales && v.extras.stripe) {
+      var st = v.extras.stripe;
+      root.appendChild(card("Stripe balance", "Live", h("div", { class: "bd-totals" },
+        h("div", null, h("small", null, "Available"), h("strong", { class: "is-in" }, E.fmtMoney(st.available))),
+        h("div", null, h("small", null, "Pending"), h("strong", null, E.fmtMoney(st.pending))),
+        h("div", null, h("small", null, "Next payout"), h("strong", null, st.payouts && st.payouts[0] ? E.fmtMoney(st.payouts[0].amount) + " · " + E.shortDate(st.payouts[0].date) : "—"))),
+        st.payouts && st.payouts.length ? h("ul", { class: "act-list" }, st.payouts.slice(0, 4).map(function (p) { return h("li", null, h("div", null, h("strong", null, "Payout"), h("small", null, E.shortDate(p.date) + " · " + p.status)), h("strong", { class: "is-in" }, E.fmtMoney(p.amount))); })) : null));
+    }
+    if (v.live.bank && v.extras.bank) {
+      root.appendChild(card("Bank balance", "Live", h("p", { class: "overview-intro" }, E.fmtMoney(v.extras.bank.balance) + " across " + v.extras.bank.accounts + (v.extras.bank.accounts === 1 ? " account" : " accounts") + (v.liveAccounts.bank ? " · " + v.liveAccounts.bank : ""))));
     }
     // chart
     var chart = card("Daily " + (v.revenueSource === "bank" ? "money in" : "revenue"), "Last 30 days");
@@ -236,7 +292,8 @@
   // ---------- Calendar ----------
   function pCalendar() {
     var root = h("div");
-    root.appendChild(pageHead("Calendar", view.flags.calendar ? view.calendarName + " · the next two weeks" : "Meetings, deadlines and business events"));
+    root.appendChild(pageHead("Calendar", view.flags.calendar ? view.calendarName + (view.liveAccounts.calendar ? " (" + view.liveAccounts.calendar + ")" : "") + " · the next two weeks" : "Meetings, deadlines and business events"));
+    if (view.flags.calendar) root.querySelector(".app-head").appendChild(pill(view.live.calendar));
     if (!view.flags.calendar) { root.appendChild(card(null, null, empty("Connect your calendar to see today’s schedule and what’s coming up. Read-only — we never add or change events.", "Connect calendar", "connections"))); return root; }
     var days = []; for (var i = 0; i < 14; i++) days.push(shift(view.today, i));
     root.appendChild(h("div", { class: "day-strip", role: "tablist", "aria-label": "Choose a day" }, days.map(function (d) {
@@ -270,11 +327,12 @@
         var it = r.item;
         var name = r.conn ? r.conn.providerName : it.title;
         var action;
-        if (r.conn) action = h("button", { class: "btn btn-ghost btn-small", type: "button", on: { click: function () { delete state.connected[it.key]; save(); draw(); } } }, "Disconnect");
+        if (r.conn) action = h("button", { class: "btn btn-ghost btn-small", type: "button", on: { click: function () { if (L && r.conn.live) L.disconnect(it.key, r.conn); delete state.connected[it.key]; save(); loadLive(); draw(); } } }, "Disconnect");
         else action = h("button", { class: "btn btn-secondary btn-small", type: "button", on: { click: function () { window.location.href = "start.html#connect=" + encodeURIComponent(it.key); } } }, it.picker ? "Choose & connect" : "Connect " + it.title);
         return h("div", { class: "conn-row" + (r.conn ? " is-on" : "") },
           h("span", { class: "conn-badge", "aria-hidden": "true" }, name.charAt(0)),
-          h("div", { class: "conn-main" }, h("strong", null, name), h("small", null, r.conn ? "Connected (demo)" + (r.conn.detail ? " · " + r.conn.detail : "") : it.short)),
+          h("div", { class: "conn-main" }, h("strong", null, name), h("small", null, r.conn ? (r.conn.live ? "Connected live" : "Connected (sample data)") + (r.conn.detail ? " · " + r.conn.detail : "") : it.short)),
+          r.conn ? pill(!!r.conn.live) : null,
           r.status === "pending" ? h("span", { class: "status-pill is-pending" }, "To do") : null, action);
       })));
       root.appendChild(c);
@@ -299,4 +357,8 @@
   });
   state.step = "app"; save();
   draw();
+  var rb = document.getElementById("refresh-live");
+  if (rb) rb.addEventListener("click", function () { rb.disabled = true; loadLive("block").then(function () { rb.disabled = false; }); });
+  if (rb) rb.hidden = !hasLive();
+  loadLive("block");
 })();

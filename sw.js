@@ -2,7 +2,7 @@
    Precaches the site with a versioned cache and serves it offline.
    Paths are relative to the worker’s scope so the cache works under a /repo/ subpath. */
 /* eslint-disable no-restricted-globals */
-var CACHE_VERSION = "ao-intelligence-v3";
+var CACHE_VERSION = "ao-intelligence-v4";
 var ASSETS = [
   "./",
   "./index.html",
@@ -10,8 +10,12 @@ var ASSETS = [
   "./business.html",
   "./start.html",
   "./app.html",
+  "./oauth.html",
   "./css/journey.css",
   "./js/engine.js",
+  "./js/config.js",
+  "./js/live.js",
+  "./js/oauth.js",
   "./js/ui.js",
   "./js/journey.js",
   "./js/app.js",
@@ -61,6 +65,16 @@ self.addEventListener("fetch", function (event) {
   if (event.request.method !== "GET") return;
   var url = new URL(event.request.url);
   if (url.origin !== self.location.origin) return;
+  // Sign-in landing pages carry one-time codes: never cache or intercept them.
+  if (/\/oauth\.html$/.test(url.pathname) || url.search.indexOf("code=") !== -1) return;
+  // Settings must always be fresh: network first, cache only as an offline fallback.
+  if (/\/js\/config\.js$/.test(url.pathname)) {
+    event.respondWith(fetch(event.request).then(function (r) {
+      if (r && r.ok) { var c = r.clone(); caches.open(CACHE_VERSION).then(function (cache) { cache.put(event.request, c); }); }
+      return r;
+    }).catch(function () { return caches.match(event.request); }));
+    return;
+  }
 
   event.respondWith(
     caches.match(event.request).then(function (cached) {
