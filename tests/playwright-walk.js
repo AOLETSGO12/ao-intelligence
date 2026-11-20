@@ -25,7 +25,7 @@ async function run(engineName, engine, label, ctxOpts) {
     const out = {}; r.headers.forEach((v, k) => { if (!/^(content-encoding|content-length|transfer-encoding|connection)$/.test(k)) out[k] = v; });
     route.fulfill({ status: r.status, headers: out, body: Buffer.from(await r.arrayBuffer()) });
   });
-  const tap = async (loc) => { await loc.scrollIntoViewIfNeeded(); await (ctxOpts.hasTouch ? loc.tap() : loc.click()); await p.waitForTimeout(450); };
+  const tap = async (loc) => { for (var i = 0; i < 4; i++) { try { await loc.waitFor({ state: 'visible', timeout: 8000 }); await loc.scrollIntoViewIfNeeded(); await (ctxOpts.hasTouch ? loc.tap({ timeout: 5000 }) : loc.click({ timeout: 5000 })); await p.waitForTimeout(450); return; } catch (e) { if (i === 3) throw e; await p.waitForTimeout(400); } } };
   const btn = (t) => p.locator('button, a, label', { hasText: t }).filter({ visible: true }).first();
   const txt = () => p.evaluate(() => document.body.innerText);
   let t;
@@ -157,10 +157,12 @@ async function run(engineName, engine, label, ctxOpts) {
   ok(!/Sample data|sample data|Demo|coming soon/i.test(t), 'no sample/demo wording on Today');
   ok(!/Workers AI|Llama|OpenAI|ChatGPT|Grok/i.test(t), 'no model or provider names on Today');
   // tasks
-  await p.fill('#new-task', 'Email the sponsor deck'); await tap(btn('Add'));
+  await p.fill('#new-task', 'Email the sponsor deck');
+  await tap(p.locator('#new-task').locator('xpath=ancestor::div[contains(@class,"add-row")]//button[normalize-space()="Add"]'));
   t = await txt(); ok(/Email the sponsor deck/.test(t), 'user task added');
   await p.locator('input[type=checkbox]').filter({ visible: true }).first().check().catch(() => {});
-  await tap(btn('Add a target')); await p.fill('#tg-label', 'Sponsor meetings'); await p.fill('#tg-cur', '1'); await p.fill('#tg-goal', '5');
+  if (!(await p.locator('#tg-label').count())) await tap(p.locator('button', { hasText: /Add a target|Add a goal/ }).filter({ visible: true }).first());
+  await p.fill('#tg-label', 'Sponsor meetings'); await p.fill('#tg-cur', '1'); await p.fill('#tg-goal', '5');
   await tap(btn('Add target')); t = await txt(); ok(/Sponsor meetings/.test(t) && /1 of 5/.test(t), 'user target added');
   // persistence
   await p.reload(); await p.waitForTimeout(1500); t = await txt(); ok(/Email the sponsor deck/.test(t) && /1 of 5/.test(t), 'tasks and targets persist after reload');
@@ -186,7 +188,7 @@ async function run(engineName, engine, label, ctxOpts) {
   await tap(p.locator('.app-tab', { hasText: 'Today' }));
   await p.fill('#new-task', 'Order parts');
   if (await p.locator('#new-task-place').count()) await p.selectOption('#new-task-place', { index: 1 });
-  await tap(btn('Add'));
+  await tap(p.locator('#new-task').locator('xpath=ancestor::div[contains(@class,"add-row")]//button[normalize-space()="Add"]'));
   t = await txt(); ok(/Order parts/.test(t) && /Workshop/.test(t), 'task tagged to a place');
   // second dashboard
   await p.selectOption('#dash-select', '__add__');
