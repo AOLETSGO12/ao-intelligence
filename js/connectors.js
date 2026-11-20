@@ -199,7 +199,41 @@
     });
   }
 
+  /* ------------------------------------------------------------------
+   * Setup flow: startConnection / completeConnection
+   *
+   * These two calls are the only seam the "Connect your business" wizard uses.
+   * In this preview they delegate to js/engine.js, which simulates the hand-off
+   * (no network, nothing real is linked). To go live, keep the signatures and
+   * replace the bodies with calls to your own backend:
+   *
+   *   startConnection(itemKey, { providerId, field }) -> Promise<session>
+   *     session = { sessionId, itemKey, providerId, providerName, detail, method, authUrl, consent }
+   *     TODO: POST /api/connections/start, which returns a real authorisation URL.
+   *       - OAuth providers (Stripe, PayPal, SumUp, Square, Xero, QuickBooks, FreeAgent,
+   *         Google, Microsoft, Zoho): server-side PKCE + state, return the /authorize URL.
+   *       - Shopify: validate the shop domain, start the Shopify OAuth install for that shop.
+   *       - Banks: a regulated UK Open Banking provider (AISP) — create a consent for the chosen bank.
+   *       - IMAP / CalDAV: collect credentials or an app password over TLS on your server only.
+   *     Then redirect (or open a popup/in-app browser) to session.authUrl.
+   *
+   *   completeConnection(session) -> Promise<connection>
+   *     connection = { key, providerId, providerName, detail, at }
+   *     TODO: on your redirect URI, exchange code + state for tokens server-side, store them
+   *       encrypted, and return only the connection record (never tokens) to the browser.
+   * ------------------------------------------------------------------ */
+  function startConnection(itemKey, options) {
+    if (!root.AOEngine) return Promise.reject(new Error("The setup engine did not load."));
+    return root.AOEngine.startConnection(itemKey, options || {});
+  }
+  function completeConnection(session) {
+    if (!root.AOEngine) return Promise.reject(new Error("The setup engine did not load."));
+    return root.AOEngine.completeConnection(session);
+  }
+
   root.Connectors = {
+    startConnection: startConnection,
+    completeConnection: completeConnection,
     listBusinesses: listBusinesses,
     listServices: listServices,
     connectService: connectService,
