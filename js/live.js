@@ -170,7 +170,9 @@
     } else if (rt === "stripe" && !(caps && caps.caps && caps.caps.stripe_oauth)) {
       f.push({ key: "key", label: "Restricted API key (read-only)", type: "password", placeholder: "rk_live_…", hint: "Stripe → Developers → API keys → Create restricted key. Give it Read on Charges, Balance and Payouts only.", required: true });
     } else if (rt === "shopify" && !(caps && caps.caps && caps.caps.shopify_oauth)) {
-      f.push({ key: "token", label: "Admin API access token", type: "password", placeholder: "shpat_…", hint: "Shopify admin → Settings → Apps → Develop apps → create an app with the read_orders scope → install → reveal token.", required: true });
+      f.push({ key: "clientId", label: "App Client ID", type: "text", hint: "Easiest for your own store: in Shopify’s Dev Dashboard create an app with the read_orders scope, install it on your store, then copy its Client ID and Client secret from Settings.", required: false });
+      f.push({ key: "clientSecret", label: "App Client secret", type: "password", required: false });
+      f.push({ key: "token", label: "…or an existing custom app’s Admin API access token", type: "password", placeholder: "shpat_…", hint: "Only if you already have a custom app (Shopify stopped allowing new ones on 1 January 2026). Fill in the Client ID and secret above, or this token — not both.", required: false });
     }
     return f;
   }
@@ -588,7 +590,7 @@
     // sealed backend connects with typed credentials
     var body;
     if (rt === "stripe") body = api("/stripe/connect", { key: values.key });
-    else if (rt === "shopify") body = api("/shopify/connect", { shop: session.detail, token: values.token });
+    else if (rt === "shopify") body = (values.clientId || values.clientSecret || values.token) ? api("/shopify/connect", { shop: session.detail, token: values.token, clientId: values.clientId, clientSecret: values.clientSecret }) : Promise.reject(new Error("Please paste the app’s Client ID and Client secret, or an Admin API access token."));
     else if (rt === "imap") body = api("/imap/connect", { address: values.address || session.detail, password: values.password, host: values.host });
     else if (rt === "calendly") body = api("/calendly/connect", { token: values.token });
     else if (rt === "caldav") {
@@ -630,13 +632,21 @@
     return Promise.reject(new Error("Please remove and add this connection again."));
   }
 
-  function disconnect(key, conn) {
+  /** Forget one connection. `others` = the remaining connections; Google access is revoked once none still use it. */
+  function disconnect(key, conn, others) {
     var t = loadTokens();
     if (t.sealed) delete t.sealed[key];
     if (conn && conn.route === "google") {
-      var still = ["mail", "calendar"].some(function (k) { return k !== key && t.google; });
-      try { if (!still && t.google && root.google && root.google.accounts) root.google.accounts.oauth2.revoke(t.google.token, function () {}); } catch (e) { /* ignore */ }
+      var still = !!others && Object.keys(others).some(function (k) { return k !== key && others[k].live && others[k].route === "google"; });
+      if (!still && t.google && t.google.token) {
+        // Google's documented revoke endpoint works without loading the sign-in script.
+        try { fetch("https://oauth2.googleapis.com/revoke", { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: "token=" + encodeURIComponent(t.google.token), keepalive: true }).catch(function () {}); } catch (e) { /* ignore */ }
+      }
       if (!still) delete t.google;
+    }
+    if (conn && conn.route === "microsoft") {
+      var stillMs = !!others && Object.keys(others).some(function (k) { return k !== key && others[k].live && others[k].route === "microsoft"; });
+      if (!stillMs) delete t.microsoft;
     }
     saveTokens(t);
   }
@@ -657,7 +667,7 @@
           var p = c.route === "google" ? fetchGmail(ctx) : c.route === "microsoft" ? fetchOutlook(ctx) : backendData("mail", "/data/mail", { owner: ctx.owner, business: ctx.business });
           return p.then(function (r) {
             var emails = r.emails || [];
-            if (c.route === "imap") emails.forEach(function (m) { m.drafts = m.drafts && m.drafts.length ? m.drafts : E.templateDrafts({ from: m.from, subject: m.subject, snippet: m.snippet }, ctx.owner, ctx.business); m.live = true; });
+            if (c.route === "imap") emails.forEach(function (m) { if (m.when_iso) m.when = whenFor(new Date(m.when_iso)); m.drafts = m.drafts && m.drafts.length ? m.drafts : E.templateDrafts({ from: m.from, subject: m.subject, snippet: m.snippet }, ctx.owner, ctx.business); m.live = true; });
             return maybeAiDrafts(emails, ctx, caps).then(function (em) { out.mail = em; out.otherMessages = r.other || 0; });
           });
         });

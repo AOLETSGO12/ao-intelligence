@@ -327,7 +327,7 @@
         var it = r.item;
         var name = r.conn ? r.conn.providerName : it.title;
         var action;
-        if (r.conn) action = h("button", { class: "btn btn-ghost btn-small", type: "button", on: { click: function () { if (L && r.conn.live) L.disconnect(it.key, r.conn); delete state.connected[it.key]; save(); loadLive(); draw(); } } }, "Disconnect");
+        if (r.conn) action = h("button", { class: "btn btn-ghost btn-small", type: "button", on: { click: function () { if (L && r.conn.live) L.disconnect(it.key, r.conn, state.connected); delete state.connected[it.key]; save(); loadLive(); draw(); } } }, "Disconnect");
         else action = h("button", { class: "btn btn-secondary btn-small", type: "button", on: { click: function () { window.location.href = "start.html#connect=" + encodeURIComponent(it.key); } } }, it.picker ? "Choose & connect" : "Connect " + it.title);
         return h("div", { class: "conn-row" + (r.conn ? " is-on" : "") },
           h("span", { class: "conn-badge", "aria-hidden": "true" }, name.charAt(0)),

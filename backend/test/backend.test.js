@@ -233,6 +233,29 @@ test("shopify: custom-app token connect + orders (pagination, filters) and OAuth
   assert.match(ok.headers.get("location"), /^https:\/\/aoletsgo12\.github\.io\/ao-intelligence\/oauth\.html#provider=shopify&state=cs&sealed=/);
 });
 
+test("shopify: Dev Dashboard client-credentials (the way to create new apps since 2026)", async () => {
+  const seen = [];
+  const fetchImpl = async (url, init = {}) => {
+    seen.push(url);
+    if (url.endsWith("/admin/oauth/access_token")) {
+      const p = new URLSearchParams(init.body);
+      assert.equal(p.get("grant_type"), "client_credentials");
+      return p.get("client_secret") === "good-secret" ? new Response(JSON.stringify({ access_token: "shpat_short24h", expires_in: 86399 })) : new Response(JSON.stringify({ error: "invalid_client" }), { status: 401 });
+    }
+    assert.equal(init.headers["x-shopify-access-token"], "shpat_short24h");
+    if (url.includes("/shop.json")) return new Response(JSON.stringify({ shop: { name: "Owen Racing Merch" } }));
+    return new Response(JSON.stringify({ orders: [{ id: 9, name: "#2001", created_at: "2026-11-19T10:00:00Z", total_price: "50.00", currency: "GBP", financial_status: "paid", line_items: [{ title: "Hoodie" }] }] }));
+  };
+  const h = createHandler({ fetchImpl });
+  assert.equal((await call(h, ENV, "/shopify/connect", { method: "POST", body: { shop: "owen", clientId: "cid", clientSecret: "bad" } })).status, 401);
+  assert.equal((await call(h, ENV, "/shopify/connect", { method: "POST", body: { shop: "owen" } })).status, 400);
+  const c = await (await call(h, ENV, "/shopify/connect", { method: "POST", body: { shop: "owen", clientId: "cid", clientSecret: "good-secret" } })).json();
+  assert.equal(c.account, "Owen Racing Merch");
+  assert.ok(!JSON.stringify(c).includes("good-secret"));
+  const d = await (await call(h, ENV, "/data/sales", { method: "POST", body: { sealed: c.sealed } })).json();
+  assert.equal(d.orders[0].ref, "#2001"); assert.equal(d.orders[0].desc, "Hoodie");
+});
+
 test("imap routes: connect + data + draft through the Worker", async () => {
   const fake = await startFakeImap({ messages: [{ uid: 7, flags: "", date: "20-Nov-2026 08:00:00 +0000", headers: "From: Dee <dee@club.org>\r\nSubject: Practice day\r\n\r\n", body: "Are you free on the 3rd?" }] });
   const h = createHandler({ openImap: async () => nodeSocket(fake.port), fetchImpl: async () => { throw new Error("no"); } });

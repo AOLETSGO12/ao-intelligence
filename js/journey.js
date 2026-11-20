@@ -410,7 +410,7 @@
     }
     draw();
     setRoot(card(h("p", { class: "j-eyebrow" }, "Helping out"), h("h1", null, who + " asked for your help"), h("p", { class: "j-lead" }, "They’re setting up AO Intelligence and need someone to connect " + (item.picker ? "their " + pk(item) : item.title) + ". It takes about " + item.minutes + (item.minutes === 1 ? " minute." : " minutes.")), body,
-      h("p", { class: "j-fine" }, "This is a demo — nothing real is connected.")));
+      h("p", { class: "j-fine" }, "Connections are read-only, and you can disconnect any time.")));
   }
 
   // ---------- router ----------

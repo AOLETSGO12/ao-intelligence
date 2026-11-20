@@ -1,5 +1,8 @@
-// Shopify (read-only orders). Either a custom-app Admin API access token the person pastes
-// (Settings → Apps → Develop apps → scope read_orders), or the OAuth install flow.
+// Shopify (read-only orders). Three ways in, simplest first:
+//   1. Dev Dashboard app + client credentials (the way to create a NEW app for your own store since 1 Jan 2026):
+//      paste the app's Client ID and Client secret; we swap them for a short-lived (24h) Admin API token on each request.
+//   2. An existing legacy custom app's Admin API access token (shpat_…) — still works, just can't be created any more.
+//   3. The OAuth install flow (for stores in other organisations).
 import { HttpError, fetchWithTimeout, wall, assertPublicHost } from "./util.js";
 import { hmacHex } from "./seal.js";
 
@@ -19,11 +22,39 @@ async function sget(fetchImpl, shop, token, pathOrUrl) {
   if (!r.ok) throw new HttpError(502, "Shopify returned an error (" + r.status + ").");
   return { json: await r.json(), link: r.headers.get("link") || "" };
 }
-export async function verify(fetchImpl, shopInput, token) {
+/** Swap a Dev Dashboard app's client ID + secret for a short-lived Admin API token (apps and stores in the same Shopify organisation). */
+export async function clientCredentialsToken(fetchImpl, shop, clientId, clientSecret) {
+  const r = await fetchWithTimeout(fetchImpl, `https://${shop}/admin/oauth/access_token`, {
+    method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({ grant_type: "client_credentials", client_id: clientId, client_secret: clientSecret }).toString(),
+  }, 20000);
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok || !j.access_token) {
+    const why = j && (j.error_description || j.error);
+    throw new HttpError(r.status === 400 || r.status === 401 || r.status === 403 ? 401 : 502,
+      /shop_not_permitted/.test(String(why)) ? "Shopify says this app and store aren’t in the same Shopify organisation, so the Client ID/secret can’t be used here. Install the app on the store and use the OAuth option instead." : "Shopify didn’t accept that Client ID and secret. Check them in the Dev Dashboard (Settings) and that the app is installed on the store.", "login");
+  }
+  return j.access_token;
+}
+/** Resolve whatever credentials we hold into a usable Admin API token. */
+export async function tokenFor(fetchImpl, creds) {
+  if (creds.cid) return clientCredentialsToken(fetchImpl, creds.shop, creds.cid, creds.csec);
+  return creds.token;
+}
+export async function verify(fetchImpl, shopInput, input) {
   const shop = cleanShop(shopInput);
-  if (!token || String(token).length < 10) throw new HttpError(400, "Please paste the Admin API access token (it starts shpat_).");
-  const { json } = await sget(fetchImpl, shop, token.trim(), "/shop.json");
-  return { creds: { shop, token: token.trim() }, account: (json.shop && json.shop.name) || shop };
+  const body = typeof input === "string" ? { token: input } : (input || {});
+  let creds;
+  if (body.clientId || body.clientSecret) {
+    if (!body.clientId || !body.clientSecret) throw new HttpError(400, "Please paste both the Client ID and the Client secret.");
+    creds = { shop, cid: String(body.clientId).trim(), csec: String(body.clientSecret).trim() };
+  } else {
+    if (!body.token || String(body.token).length < 10) throw new HttpError(400, "Please paste either the Admin API access token (starts shpat_), or the Client ID and Client secret of a Dev Dashboard app.");
+    creds = { shop, token: String(body.token).trim() };
+  }
+  const token = await tokenFor(fetchImpl, creds);
+  const { json } = await sget(fetchImpl, shop, token, "/shop.json");
+  return { creds, account: (json.shop && json.shop.name) || shop };
 }
 export function mapOrders(orders, tz) {
   return orders.filter((o) => !o.cancelled_at && !o.test && ["paid", "partially_paid", "partially_refunded", "authorized"].includes(o.financial_status)).map((o) => {
@@ -34,11 +65,12 @@ export function mapOrders(orders, tz) {
   });
 }
 export async function fetchOrders(fetchImpl, creds, { days = 30, tz = "Europe/London" } = {}) {
+  const token = await tokenFor(fetchImpl, creds);
   const since = new Date(Date.now() - days * 86400000).toISOString();
   let next = `/orders.json?status=any&limit=250&created_at_min=${encodeURIComponent(since)}&fields=id,name,created_at,total_price,currency,financial_status,cancelled_at,line_items,source_name,test`;
   const all = [];
   for (let page = 0; page < 6 && next; page++) {
-    const { json, link } = await sget(fetchImpl, creds.shop, creds.token, next);
+    const { json, link } = await sget(fetchImpl, creds.shop, token, next);
     all.push(...(json.orders || []));
     const m = link.match(/<([^>]+)>;\s*rel="next"/);
     next = m ? m[1] : null;

@@ -183,7 +183,7 @@ export function createHandler({ fetchImpl = fetch, openImap = (host) => connectT
       return json(env, request, { sealed: await seal(env.SEAL_KEY, { t: "stripe", ...v.creds }), account: v.account });
     }
     if (path === "/shopify/connect") {
-      const v = await SH.verify(fetchImpl, body.shop, body.token);
+      const v = await SH.verify(fetchImpl, body.shop, { token: body.token, clientId: body.clientId, clientSecret: body.clientSecret });
       return json(env, request, { sealed: await seal(env.SEAL_KEY, { t: "shopify", ...v.creds }), account: v.account });
     }
 
