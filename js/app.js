@@ -1,12 +1,16 @@
-/* Your day: Today / Inbox / Money / Calendar / Connections — personalised from the journey.
-   Real data from your connections (or ?demo=1 for the sample walkthrough); state is local to this device. */
+/* Your day: Today / Inbox / Money / Calendar / Connections / Settings — personalised per dashboard.
+   Real data from your connections; state is local to this device and namespaced per dashboard. */
 (function () {
   "use strict";
   var E = window.AOEngine, S = window.AOStore;
   if (!E || !S) return;
   var h = S.h;
   var state = S.load();
-  if (!state.business) { window.location.replace("start.html"); return; }
+  if (!state.business || state.step !== "app") {
+    var ready = S.firstReadyId && S.firstReadyId();
+    if (ready && ready !== S.currentId()) { S.switchTo(ready); state = S.load(); }
+    if (!state.business) { window.location.replace("start.html"); return; }
+  }
   var panel = document.getElementById("app-panel");
   var tabsEl = document.getElementById("app-tabs");
   var TABS = [
@@ -22,16 +26,52 @@
   var live = null;          // real data fetched from live connections (null until loaded)
   var loading = false;
   var L = window.AOLive;
-  var ui = { day: null, draft: {}, copied: null, saved: {}, saveErr: {}, editTask: null, editTarget: null, addingTarget: false, editGoal: false };
+  var ui = { day: null, draft: {}, copied: null, saved: {}, saveErr: {}, editTask: null, editTarget: null, addingTarget: false, editGoal: false, addingPlace: false, editPlace: null };
   var REAL = !S.demo;
   if (REAL) E.ITEM_ORDER.sort(function (a, b) { var o = ["mail", "calendar", "bank", "sales:stripe", "sales:shopify"], A = o.indexOf(a), B = o.indexOf(b); return (A === -1 ? 99 : A) - (B === -1 ? 99 : B); });
   function uid() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 6); }
 
-  document.getElementById("app-biz").textContent = state.business.name;
-  document.getElementById("reset-demo").textContent = REAL ? "Start over" : "Reset demo";
-  document.getElementById("reset-demo").addEventListener("click", function () {
-    S.confirmReset(function () { window.location.href = "start.html"; });
-  });
+  function placeById(id) {
+    if (!id || !state.places) return null;
+    for (var i = 0; i < state.places.length; i++) if (state.places[i].id === id) return state.places[i];
+    return null;
+  }
+  function placeSelect(current, attrs) {
+    var sel = h("select", Object.assign({ "aria-label": "Place", class: "task-place-select" }, attrs || {}),
+      [h("option", { value: "" }, "No place")].concat((state.places || []).map(function (pl) {
+        return h("option", { value: pl.id }, pl.name + (pl.address ? " — " + pl.address : ""));
+      })));
+    sel.value = current || "";
+    return sel;
+  }
+  function fillSwitcher() {
+    var sel = document.getElementById("dash-select");
+    if (!sel) return;
+    var cur = S.currentId();
+    var keep = sel.value;
+    while (sel.firstChild) sel.removeChild(sel.firstChild);
+    (S.list() || []).forEach(function (d) {
+      var opt = document.createElement("option");
+      opt.value = d.id;
+      opt.textContent = d.name || (d.type === "personal" ? "Personal" : "New dashboard");
+      if (d.id === cur) opt.selected = true;
+      sel.appendChild(opt);
+    });
+    var add = document.createElement("option");
+    add.value = "__add__";
+    add.textContent = "+ Add a dashboard";
+    sel.appendChild(add);
+    if (!sel._bound) {
+      sel._bound = true;
+      sel.addEventListener("change", function () {
+        if (sel.value === "__add__") { window.location.href = "start.html?add=1"; return; }
+        if (sel.value && sel.value !== S.currentId()) { S.switchTo(sel.value); window.location.reload(); }
+      });
+    }
+  }
+  fillSwitcher();
+  var settingsBtn = document.getElementById("app-settings");
+  if (settingsBtn) settingsBtn.addEventListener("click", function () { go("settings"); });
 
   function save() { S.save(state); }
   function compute() {
@@ -67,7 +107,8 @@
     compute(); drawTabs(); drawBadge();
     S.clear(panel);
     if (loading && hasLive()) { panel.appendChild(h("div", { class: "app-loading", role: "status" }, h("span", { class: "j-spinner", "aria-hidden": "true" }), h("p", null, "Fetching your live data…"))); return; }
-    var root = { today: pToday, inbox: pInbox, money: pMoney, calendar: pCalendar, connections: pConnections }[active]();
+    var pages = { today: pToday, inbox: pInbox, money: pMoney, calendar: pCalendar, connections: pConnections, settings: pSettings };
+    var root = (pages[active] || pToday)();
     var notices = liveNotices();
     if (notices) root.insertBefore(notices, root.firstChild && root.firstChild.nextSibling);
     panel.appendChild(root);
@@ -183,20 +224,30 @@
       cb.addEventListener("change", function () { toggleDone(t, cb.checked); });
       if (t.user && ui.editTask === t.id) {
         var inp = h("input", { type: "text", class: "task-edit", value: t.title, "aria-label": "Edit task", maxlength: "200" });
-        var saveEdit = function () { var v = inp.value.trim(); if (v) state.userTasks.forEach(function (u) { if (u.id === t.id.slice(2)) u.title = v; }); ui.editTask = null; save(); draw(); };
+        var curPlace = (state.userTasks.filter(function (u) { return u.id === t.id.slice(2); })[0] || {}).placeId || "";
+        var psel = (state.places && state.places.length) ? placeSelect(curPlace) : null;
+        var saveEdit = function () { var v = inp.value.trim(); if (v) state.userTasks.forEach(function (u) { if (u.id === t.id.slice(2)) { u.title = v; if (psel) u.placeId = psel.value || undefined; } }); ui.editTask = null; save(); draw(); };
         inp.addEventListener("keydown", function (e) { if (e.key === "Enter") saveEdit(); if (e.key === "Escape") { ui.editTask = null; draw(); } });
         setTimeout(function () { inp.focus(); }, 0);
-        return h("li", { class: "task is-editing" }, inp, h("button", { class: "btn btn-primary btn-small", type: "button", on: { click: saveEdit } }, "Save"), h("button", { class: "link-btn", type: "button", on: { click: function () { ui.editTask = null; draw(); } } }, "Cancel"));
+        return h("li", { class: "task is-editing" }, inp, psel, h("button", { class: "btn btn-primary btn-small", type: "button", on: { click: saveEdit } }, "Save"), h("button", { class: "link-btn", type: "button", on: { click: function () { ui.editTask = null; draw(); } } }, "Cancel"));
       }
-      return h("li", { class: "task" + (t.done ? " is-done" : "") }, cb, h("label", { for: "task-" + t.id }, t.title, !t.user ? h("small", { class: "task-sugg" }, " suggested") : null),
+      var tPlace = t.user ? placeById((state.userTasks.filter(function (u) { return u.id === t.id.slice(2); })[0] || {}).placeId) : null;
+      return h("li", { class: "task" + (t.done ? " is-done" : "") }, cb, h("label", { for: "task-" + t.id }, t.title, tPlace ? h("small", { class: "task-place" }, tPlace.name) : null, !t.user ? h("small", { class: "task-sugg" }, " suggested") : null),
         t.tab ? h("button", { class: "link-btn", type: "button", on: { click: function () { go(t.tab); } } }, "Open") : null,
         t.user ? h("button", { class: "link-btn", type: "button", "aria-label": "Edit " + t.title, on: { click: function () { ui.editTask = t.id; draw(); } } }, "Edit") : null,
         t.user ? h("button", { class: "link-btn is-danger", type: "button", "aria-label": "Remove " + t.title, on: { click: function () { state.userTasks = state.userTasks.filter(function (u) { return u.id !== t.id.slice(2); }); save(); draw(); } } }, "Remove") : null);
     })));
     var add = h("input", { type: "text", id: "new-task", placeholder: "Add a task, e.g. Send the sponsor deck", maxlength: "200", "aria-label": "New task", autocomplete: "off" });
-    var addIt = function () { var v = add.value.trim(); if (!v) { add.focus(); return; } state.userTasks.push({ id: uid(), title: v, done: false, created: new Date().toISOString() }); save(); draw(); var n = document.getElementById("new-task"); if (n) n.focus(); };
+    var addPlace = (state.places && state.places.length) ? placeSelect("", { id: "new-task-place" }) : null;
+    var addIt = function () {
+      var v = add.value.trim(); if (!v) { add.focus(); return; }
+      var task = { id: uid(), title: v, done: false, created: new Date().toISOString() };
+      if (addPlace && addPlace.value) task.placeId = addPlace.value;
+      state.userTasks.push(task); save(); draw();
+      var n = document.getElementById("new-task"); if (n) n.focus();
+    };
     add.addEventListener("keydown", function (e) { if (e.key === "Enter") { e.preventDefault(); addIt(); } });
-    tasks.appendChild(h("div", { class: "add-row" }, add, h("button", { class: "btn btn-primary btn-small", type: "button", on: { click: addIt } }, "Add")));
+    tasks.appendChild(h("div", { class: "add-row" }, add, addPlace, h("button", { class: "btn btn-primary btn-small", type: "button", on: { click: addIt } }, "Add")));
     var done = state.userTasks.filter(function (u) { return u.done; }).length;
     if (done) tasks.appendChild(h("button", { class: "link-btn", type: "button", on: { click: function () { state.userTasks = state.userTasks.filter(function (u) { return !u.done; }); save(); draw(); } } }, "Clear " + done + " completed"));
     return tasks;
@@ -259,9 +310,21 @@
 
   function eventList(events, showDate) {
     return h("ul", { class: "event-list" }, events.map(function (e) {
+      var tagged = placeById(state.eventPlaces && e.id ? state.eventPlaces[e.id] : null);
+      var where = tagged ? tagged.name : (e.place || (e.kind === "deadline" ? "Deadline" : ""));
+      var tagger = null;
+      if (state.places && state.places.length && e.id) {
+        var sel = placeSelect(state.eventPlaces && state.eventPlaces[e.id] || "", { "aria-label": "Tag a place for " + e.title });
+        sel.addEventListener("change", function () {
+          state.eventPlaces = state.eventPlaces || {};
+          if (sel.value) state.eventPlaces[e.id] = sel.value; else delete state.eventPlaces[e.id];
+          save(); draw();
+        });
+        tagger = h("div", { class: "event-place" }, h("span", { class: "muted" }, "Place"), sel);
+      }
       return h("li", { class: "event kind-" + e.kind },
         h("div", { class: "event-time" }, e.allDay ? "All day" : e.kind === "deadline" ? "Due" : E.time12(e.start), !e.allDay && e.kind !== "deadline" && e.end !== e.start ? h("small", null, "to " + E.time12(e.end)) : null),
-        h("div", null, h("strong", null, e.title), h("small", null, (showDate ? E.whenLabel(e.date, view.today) + " · " : "") + (e.place || (e.kind === "deadline" ? "Deadline" : "")))));
+        h("div", null, h("strong", null, e.title), h("small", null, (showDate ? E.whenLabel(e.date, view.today) + " · " : "") + where), tagger));
     }));
   }
 
@@ -447,24 +510,84 @@
     var other = card("Something else? Tell us", null, note,
       h("button", { class: "btn btn-secondary btn-small", type: "button", on: { click: function () { state.requests.other = note.value.trim() || undefined; save(); saved.textContent = "Noted — thank you."; } } }, "Send"), saved);
     root.appendChild(other);
-    if (REAL) {
-      var sums = [];
-      root.appendChild(card("Your data", null,
-        h("p", { class: "muted" }, "Everything this app keeps — your tasks, targets, bank statement, provider requests and sign-in details — lives only in this browser on this device. Start over erases all of it."),
-        h("button", { class: "btn btn-secondary btn-small", type: "button", on: { click: function () { S.confirmReset(function () { window.location.href = "start.html"; }); } } }, "Start over")));
-    } else {
-      root.appendChild(card("Demo controls", null,
-        h("p", { class: "muted" }, "Want to run the journey again from the beginning?"),
-        h("button", { class: "btn btn-secondary btn-small", type: "button", on: { click: function () { S.confirmReset(function () { window.location.href = "start.html"; }); } } }, "Reset demo")));
+    root.appendChild(card("Your data", null,
+      h("p", { class: "muted" }, "Everything this dashboard keeps — tasks, targets, places, bank statements and sign-in details — lives only in this browser on this device. Open Settings to delete this dashboard or sign out of this device.")));
+    return root;
+  }
+
+  function pSettings() {
+    var info = S.currentInfo && S.currentInfo() || { name: state.business && state.business.name };
+    var root = h("div");
+    root.appendChild(pageHead("Settings", info && info.name ? info.name : "This dashboard"));
+
+    var placesCard = card("Places", (state.places || []).length ? String((state.places || []).length) : null);
+    placesCard.appendChild(h("p", { class: "muted" }, "Locations this dashboard uses — a workshop, an office, a track. You can tag tasks and calendar events to one."));
+    if (!(state.places || []).length && !ui.addingPlace) placesCard.appendChild(h("p", { class: "muted" }, "No places yet."));
+    if ((state.places || []).length) {
+      placesCard.appendChild(h("ul", { class: "place-list" }, state.places.map(function (pl) {
+        if (ui.editPlace === pl.id) {
+          var n = h("input", { type: "text", value: pl.name, maxlength: "80", "aria-label": "Place name" });
+          var a = h("input", { type: "text", value: pl.address || "", maxlength: "200", "aria-label": "Address" });
+          var saveP = function () {
+            var name = n.value.trim(); if (!name) { n.focus(); return; }
+            state.places.forEach(function (x) { if (x.id === pl.id) { x.name = name; x.address = a.value.trim(); } });
+            ui.editPlace = null; save(); draw();
+          };
+          return h("li", { class: "place-row" }, n, a, h("button", { class: "btn btn-primary btn-small", type: "button", on: { click: saveP } }, "Save"), h("button", { class: "link-btn", type: "button", on: { click: function () { ui.editPlace = null; draw(); } } }, "Cancel"));
+        }
+        return h("li", { class: "place-row" },
+          h("div", { class: "place-meta" }, h("strong", null, pl.name), pl.address ? h("small", null, pl.address) : null),
+          h("div", null,
+            h("button", { class: "link-btn", type: "button", on: { click: function () { ui.editPlace = pl.id; ui.addingPlace = false; draw(); } } }, "Edit"),
+            h("button", { class: "link-btn is-danger", type: "button", on: { click: function () {
+              state.places = state.places.filter(function (x) { return x.id !== pl.id; });
+              state.userTasks.forEach(function (t) { if (t.placeId === pl.id) delete t.placeId; });
+              if (state.eventPlaces) Object.keys(state.eventPlaces).forEach(function (k) { if (state.eventPlaces[k] === pl.id) delete state.eventPlaces[k]; });
+              save(); draw();
+            } } }, "Remove")));
+      })));
     }
+    if (ui.addingPlace) {
+      var pn = h("input", { type: "text", id: "place-name", placeholder: "e.g. Workshop", maxlength: "80", "aria-label": "Place name" });
+      var pa = h("input", { type: "text", id: "place-addr", placeholder: "Address (optional)", maxlength: "200", "aria-label": "Address" });
+      var addP = function () {
+        var name = pn.value.trim(); if (!name) { pn.focus(); return; }
+        state.places = state.places || [];
+        state.places.push({ id: uid(), name: name, address: pa.value.trim() });
+        ui.addingPlace = false; save(); draw();
+      };
+      placesCard.appendChild(h("div", { class: "place-form" }, pn, pa,
+        h("div", { class: "add-row" },
+          h("button", { class: "btn btn-primary btn-small", type: "button", on: { click: addP } }, "Save place"),
+          h("button", { class: "link-btn", type: "button", on: { click: function () { ui.addingPlace = false; draw(); } } }, "Cancel"))));
+      setTimeout(function () { var el = document.getElementById("place-name"); if (el) el.focus(); }, 0);
+    } else {
+      placesCard.appendChild(h("button", { class: "btn btn-secondary btn-small", type: "button", on: { click: function () { ui.addingPlace = true; ui.editPlace = null; draw(); } } }, "Add a place"));
+    }
+    root.appendChild(placesCard);
+
+    root.appendChild(card("This dashboard", null,
+      h("p", { class: "muted" }, "Removing it deletes its connections, tasks, targets, places and uploads from this device. Your other dashboards stay as they are."),
+      h("button", { class: "btn btn-secondary btn-small", type: "button", on: { click: function () {
+        S.confirmDeleteDashboard(info, function () {
+          var next = S.deleteDashboard(S.currentId());
+          window.location.href = next ? "app.html#today" : "start.html";
+        });
+      } } }, "Delete this dashboard")));
+
+    root.appendChild(card("This device", null,
+      h("p", { class: "muted" }, "Sign out removes every dashboard and connection kept in this browser. Your email, calendars and bank themselves are not changed."),
+      h("button", { class: "btn btn-secondary btn-small", type: "button", on: { click: function () {
+        S.confirmSignOut(function () { S.signOut(); window.location.href = "index.html"; });
+      } } }, "Sign out of this device")));
     return root;
   }
 
   var hash = (window.location.hash || "").replace("#", "");
-  if (TABS.some(function (t) { return t.id === hash; })) active = hash;
+  if (hash === "settings" || TABS.some(function (t) { return t.id === hash; })) active = hash;
   window.addEventListener("hashchange", function () {
     var x = (window.location.hash || "").replace("#", "");
-    if (TABS.some(function (t) { return t.id === x; }) && x !== active) { active = x; draw(); }
+    if ((x === "settings" || TABS.some(function (t) { return t.id === x; })) && x !== active) { active = x; draw(); }
   });
   state.step = "app"; save();
   draw();

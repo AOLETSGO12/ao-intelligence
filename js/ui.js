@@ -1,16 +1,14 @@
-/* Tiny DOM + storage helpers shared by start.html and app.html (demo only). */
+/* DOM helpers and dashboard (workspace) storage for start.html and app.html.
+   Everything lives in this browser. Multiple dashboards are namespaced so each
+   has its own connections, tasks, money uploads and drafts. */
 (function (root) {
   "use strict";
   var E = root.AOEngine;
-  // Real app by default. The old walkthrough with generated sample data is only reachable on purpose: add ?demo=1 to the address.
-  var DEMO = false;
-  try {
-    var qs = root.location.search || "";
-    if (/[?&]demo=1(&|$)/.test(qs)) root.localStorage.setItem("ao-mode", "demo");
-    else if (/[?&]demo=0(&|$)/.test(qs)) root.localStorage.removeItem("ao-mode");
-    DEMO = root.localStorage.getItem("ao-mode") === "demo";
-  } catch (e) { /* storage blocked: stay in real mode */ }
-  var KEY = DEMO ? "ao-intelligence-journey-v2" : "ao-app-v1";
+  var META_KEY = "ao-meta-v1";
+  var LEGACY_STATE = "ao-app-v1";
+  var LEGACY_TOKENS = "ao-live-tokens-v1";
+  var LEGACY_BANK = "ao-local-bank-v1";
+  var LEGACY_CAL = "ao-local-calendar-v1";
 
   function h(tag, props) {
     var el = document.createElement(tag);
@@ -35,27 +33,186 @@
   }
   function clear(el) { while (el.firstChild) el.removeChild(el.firstChild); }
 
-  function load() {
-    var raw = null;
-    try { raw = root.localStorage.getItem(KEY); } catch (e) { /* ignore */ }
-    var st = E.parseState(raw);
-    st.real = !DEMO;
+  function get(key) { try { return root.localStorage.getItem(key); } catch (e) { return null; } }
+  function set(key, val) { try { root.localStorage.setItem(key, val); return true; } catch (e) { return false; } }
+  function del(key) { try { root.localStorage.removeItem(key); } catch (e) { /* ignore */ } }
+  function uid() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 8); }
+
+  function stateKey(id) { return "ao-dash-" + id + "-state"; }
+  function tokenKey(id) { return "ao-dash-" + id + "-tokens"; }
+  function bankKey(id) { return "ao-dash-" + id + "-bank"; }
+  function calKey(id) { return "ao-dash-" + id + "-cal"; }
+
+  function readMeta() {
+    try { var m = JSON.parse(get(META_KEY) || "null"); if (m && m.v === 1 && Array.isArray(m.dashboards)) return m; } catch (e) { /* ignore */ }
+    return { v: 1, account: null, current: null, dashboards: [] };
+  }
+  function writeMeta(m) { set(META_KEY, JSON.stringify(m)); }
+
+  function migrate() {
+    if (get(META_KEY)) return;
+    var old = get(LEGACY_STATE), tokens = get(LEGACY_TOKENS), bank = get(LEGACY_BANK), cal = get(LEGACY_CAL);
+    if (!old && !tokens && !bank && !cal) return;
+    var st = E.parseState(old);
+    if (st.places == null) st.places = [];
+    if (st.eventPlaces == null) st.eventPlaces = {};
+    var name = (st.business && st.business.name) || "Personal";
+    var type = (st.business && st.business.type) || (/^personal$/i.test(name) ? "personal" : "business");
+    var id = uid();
+    var meta = {
+      v: 1,
+      account: st.account || null,
+      current: id,
+      dashboards: [{ id: id, name: name, type: type, industry: st.business && st.business.industry, size: st.business && st.business.size, created: new Date().toISOString() }]
+    };
+    set(stateKey(id), JSON.stringify(st));
+    if (tokens) set(tokenKey(id), tokens);
+    if (bank) set(bankKey(id), bank);
+    if (cal) set(calKey(id), cal);
+    writeMeta(meta);
+    del(LEGACY_STATE); del(LEGACY_TOKENS); del(LEGACY_BANK); del(LEGACY_CAL); del("ao-mode");
+  }
+  migrate();
+
+  function currentId() { return readMeta().current || null; }
+  function list() { return readMeta().dashboards.slice(); }
+  function account() { return readMeta().account || null; }
+  function currentInfo() {
+    var m = readMeta();
+    for (var i = 0; i < m.dashboards.length; i++) if (m.dashboards[i].id === m.current) return m.dashboards[i];
+    return m.dashboards[0] || null;
+  }
+  function hasDashboards() { return list().length > 0; }
+  function isReady(st) { return !!(st && st.business && st.step === "app"); }
+  function firstReadyId() {
+    var m = readMeta();
+    var ids = m.dashboards.map(function (d) { return d.id; });
+    if (m.current) ids = [m.current].concat(ids.filter(function (id) { return id !== m.current; }));
+    for (var i = 0; i < ids.length; i++) {
+      if (isReady(E.parseState(get(stateKey(ids[i]))))) return ids[i];
+    }
+    return null;
+  }
+  function hasReadyDashboard() { return !!firstReadyId(); }
+
+  function loadState(id) {
+    var st = E.parseState(get(stateKey(id)));
+    st.real = true;
+    if (!st.places) st.places = [];
+    if (!st.eventPlaces) st.eventPlaces = {};
     return st;
   }
-  function save(s) {
-    try { root.localStorage.setItem(KEY, JSON.stringify(s)); } catch (e) { /* ignore */ }
+  function saveState(id, s) { set(stateKey(id), JSON.stringify(s)); }
+
+  function load() { var id = currentId(); return id ? loadState(id) : E.parseState(null); }
+  function save(s) { var id = currentId(); if (id) saveState(id, s); }
+
+  function setAccount(acc) { var m = readMeta(); m.account = acc; writeMeta(m); }
+  function updateCurrent(patch) {
+    var m = readMeta();
+    m.dashboards.forEach(function (d) {
+      if (d.id === m.current) Object.keys(patch).forEach(function (k) { d[k] = patch[k]; });
+    });
+    writeMeta(m);
   }
-  function reset() {
+
+  function beginAdd(opts) {
+    opts = opts || {};
+    var m = readMeta();
+    var id = uid();
+    var dash = { id: id, name: opts.name || "", type: opts.type || "business", industry: opts.industry || "motorsport", size: opts.size || "solo", created: new Date().toISOString() };
+    m.dashboards.push(dash);
+    m.current = id;
+    writeMeta(m);
+    var st = E.parseState(null);
+    st.real = true;
+    st.step = m.account ? "business" : "account";
+    st.account = m.account || null;
+    st.places = [];
+    st.eventPlaces = {};
+    st.selected = [];
+    saveState(id, st);
+    return dash;
+  }
+
+  function switchTo(id) {
+    var m = readMeta();
+    if (!m.dashboards.some(function (d) { return d.id === id; })) return false;
+    m.current = id;
+    writeMeta(m);
+    return true;
+  }
+
+  function clearDashKeys(id) {
+    del(stateKey(id)); del(tokenKey(id)); del(bankKey(id)); del(calKey(id));
+  }
+
+  function disconnectDash(id) {
     try {
-      var s = load();
+      var st = loadState(id);
       if (root.AOLive) {
-        Object.keys(s.connected || {}).forEach(function (k) { if (s.connected[k].live) root.AOLive.disconnect(k, s.connected[k]); });
+        var cur = currentId();
+        // temporarily point token reads at this dashboard
+        var m = readMeta(); m.current = id; writeMeta(m);
+        Object.keys(st.connected || {}).forEach(function (k) { if (st.connected[k].live) root.AOLive.disconnect(k, st.connected[k]); });
         root.AOLive.clearTokens();
+        m.current = cur; writeMeta(m);
       }
     } catch (e) { /* ignore */ }
-    try { root.localStorage.removeItem(KEY); } catch (e) { /* ignore */ }
-    if (root.AOReal) { root.AOReal.clearBank(); root.AOReal.clearCalendar(); }
+    clearDashKeys(id);
   }
+
+  function deleteDashboard(id) {
+    var m = readMeta();
+    disconnectDash(id);
+    m.dashboards = m.dashboards.filter(function (d) { return d.id !== id; });
+    if (m.current === id) m.current = m.dashboards[0] ? m.dashboards[0].id : null;
+    writeMeta(m);
+    return m.current;
+  }
+
+  function signOut() {
+    var m = readMeta();
+    m.dashboards.slice().forEach(function (d) { disconnectDash(d.id); });
+    del(META_KEY); del(LEGACY_STATE); del(LEGACY_TOKENS); del(LEGACY_BANK); del(LEGACY_CAL); del("ao-mode");
+    del("ao-oauth-pending-v1"); del("ao-oauth-result-v1");
+  }
+
+  function isAdding() {
+    try { return /[?&]add=1(&|$)/.test(root.location.search || ""); } catch (e) { return false; }
+  }
+
+  function confirmModal(opts) {
+    var back = h("div", { class: "j-modal-back is-open", role: "presentation" });
+    var dlg = h("div", { class: "j-modal", role: "dialog", "aria-modal": "true", "aria-label": opts.title, tabindex: "-1" },
+      h("h2", null, opts.title),
+      h("p", null, opts.body),
+      h("div", { class: "j-actions" },
+        h("button", { class: "btn btn-secondary", type: "button", on: { click: function () { document.body.removeChild(back); } } }, opts.cancel || "Cancel"),
+        h("button", { class: "btn btn-primary", type: "button", on: { click: function () { document.body.removeChild(back); opts.onYes(); } } }, opts.ok)));
+    back.appendChild(dlg);
+    document.body.appendChild(back);
+    dlg.focus();
+  }
+
+  function confirmDeleteDashboard(info, onYes) {
+    var name = (info && info.name) || "this dashboard";
+    confirmModal({
+      title: "Delete \u201c" + name + "\u201d?",
+      body: "This removes “" + name + "” and its connections, tasks, targets, places and uploads from this device. Your other dashboards are not touched. Your email, calendars and bank themselves are not changed.",
+      ok: "Delete dashboard",
+      onYes: onYes
+    });
+  }
+  function confirmSignOut(onYes) {
+    confirmModal({
+      title: "Sign out of this device?",
+      body: "This signs you out of AO Intelligence on this device. Dashboards, connections and files kept here will be removed from this browser. Your email, calendars and bank themselves are not changed. You can also revoke access in your provider’s security settings.",
+      ok: "Sign out",
+      onYes: onYes
+    });
+  }
+
   function baseUrl() {
     var p = root.location.href.split("#")[0].split("?")[0];
     return p.substring(0, p.lastIndexOf("/") + 1);
@@ -73,18 +230,18 @@
       document.body.removeChild(ta);
     });
   }
-  function confirmReset(onYes) {
-    var back = h("div", { class: "j-modal-back is-open", role: "presentation" });
-    var dlg = h("div", { class: "j-modal", role: "dialog", "aria-modal": "true", "aria-label": "Start over", tabindex: "-1" },
-      h("h2", null, "Start over?"),
-      !DEMO ? h("p", null, "This erases everything this app keeps on this device — your tasks and targets, the bank statement and calendar file you uploaded, and every connection (mailbox passwords and sign-in tokens included; we also ask Google to revoke access). Your emails, calendars and bank themselves are not touched. To fully remove access you can also revoke it in your provider’s security settings.") : null,
-      DEMO ? h("p", null, "This clears your account, your business and every connection on this device — including any live sign-ins kept in this browser (we also ask Google to revoke access) — and takes you back to the beginning. To fully remove access you can also revoke AO Intelligence in your provider’s security settings.") : null,
-      h("div", { class: "j-actions" },
-        h("button", { class: "btn btn-secondary", type: "button", on: { click: function () { document.body.removeChild(back); } } }, "Keep going"),
-        h("button", { class: "btn btn-primary", type: "button", on: { click: function () { reset(); onYes(); } } }, DEMO ? "Reset demo" : "Erase and start over")));
-    back.appendChild(dlg);
-    document.body.appendChild(back);
-    dlg.focus();
-  }
-  root.AOStore = { demo: DEMO, h: h, clear: clear, load: load, save: save, reset: reset, baseUrl: baseUrl, copyText: copyText, confirmReset: confirmReset, KEY: KEY };
+
+  root.AOStore = {
+    demo: false,
+    h: h, clear: clear, load: load, save: save,
+    currentId: currentId, list: list, account: account, setAccount: setAccount,
+    currentInfo: currentInfo, updateCurrent: updateCurrent, hasDashboards: hasDashboards,
+    hasReadyDashboard: hasReadyDashboard, firstReadyId: firstReadyId, isAdding: isAdding, beginAdd: beginAdd,
+    switchTo: switchTo, deleteDashboard: deleteDashboard, signOut: signOut,
+    tokenKey: function (id) { return tokenKey(id || currentId()); },
+    bankKey: function (id) { return bankKey(id || currentId()); },
+    calKey: function (id) { return calKey(id || currentId()); },
+    confirmDeleteDashboard: confirmDeleteDashboard, confirmSignOut: confirmSignOut,
+    baseUrl: baseUrl, copyText: copyText, KEY: META_KEY
+  };
 })(window);

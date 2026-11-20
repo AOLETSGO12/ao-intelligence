@@ -28,19 +28,33 @@ async function run(engineName, engine, label, ctxOpts) {
   const tap = async (loc) => { await loc.scrollIntoViewIfNeeded(); await (ctxOpts.hasTouch ? loc.tap() : loc.click()); await p.waitForTimeout(450); };
   const btn = (t) => p.locator('button, a, label', { hasText: t }).filter({ visible: true }).first();
   const txt = () => p.evaluate(() => document.body.innerText);
+  let t;
   await p.goto(BASE + 'start.html'); await p.waitForTimeout(1200);
-  await p.evaluate(() => localStorage.clear()); await p.reload(); await p.waitForTimeout(800);
+  await p.evaluate(() => {
+    localStorage.clear();
+    var st = { v: 1, step: 'app', cursor: 0, selected: ['bank'], connected: {}, skipped: [], requests: {}, doneTasks: [], replied: [], edits: {}, userTasks: [{ id: 't1', title: 'Keep this task', done: false, created: new Date().toISOString() }], userTargets: [], account: { name: 'Archie Owen', email: 'archie@example.com' }, business: { name: 'Archie Owen Racing', industry: 'motorsport', size: 'solo' } };
+    localStorage.setItem('ao-app-v1', JSON.stringify(st));
+  });
+  await p.goto(BASE + 'start.html'); await p.waitForTimeout(1200);
+  await p.waitForURL(/app\.html/, { timeout: 8000 }).catch(() => {});
+  t = await txt();
+  ok(/app\.html/.test(p.url()) && /Keep this task/.test(t), 'legacy storage is migrated and start.html opens the app');
+  ok(await p.locator('#dash-select option', { hasText: 'Archie Owen Racing' }).count(), 'migrated dashboard keeps its name');
+  ok(!/Start over|Reset demo/.test(t), 'migrated app has no Start over');
+  await p.evaluate(() => localStorage.clear());
+  await p.goto(BASE + 'start.html'); await p.waitForTimeout(800);
   ok(!(await txt()).includes('Password'), 'no fake password field in the real app');
   await p.fill('#acc-name', 'Archie Owen'); await p.fill('#acc-email', 'archie@example.com');
   await tap(btn('Continue')); await p.fill('#biz-name', 'Archie Owen Racing'); await tap(btn('Continue')); await tap(btn('Let’s go'));
-  let t = await txt(); ok(/Email/.test(t) && /Calendar/.test(t) && !/Xero|QuickBooks|FreeAgent|PayPal\s*\n/.test(t), 'pick screen lists only real options');
+  t = await txt(); ok(/Email/.test(t) && /Calendar/.test(t) && !/Xero|QuickBooks|FreeAgent|PayPal\s*\n/.test(t), 'pick screen lists only real options');
   await tap(btn('Continue with 3 selected'));
   // --- mail
   t = await txt(); ok(/Connect your email/.test(t), 'email step');
   const noPlaceholders = (x) => !/coming soon|let us know|not available yet|tell us which/i.test(x);
   ok(noPlaceholders(t), 'no “coming soon / let us know” text on the email step');
-  for (const n of ['Gmail (Google)', 'Outlook, Hotmail or Microsoft 365', 'iCloud Mail', 'Yahoo Mail', 'AOL Mail', 'Zoho Mail', 'Fastmail', 'GMX', 'BT Mail', 'Sky Mail', 'Virgin Media', 'Another provider']) if (!t.includes(n)) ok(false, 'provider listed: ' + n);
-  ok(t.includes('Another provider') && t.includes('Virgin Media'), 'every provider is listed');
+  for (const n of ['Gmail (Google)', 'iCloud Mail', 'Yahoo Mail', 'AOL Mail', 'Zoho Mail', 'Fastmail', 'GMX', 'BT Mail', 'Sky Mail', 'Virgin Media', 'Another provider']) if (!t.includes(n)) ok(false, 'provider listed: ' + n);
+  ok(t.includes('Another provider') && t.includes('Virgin Media'), 'every listed provider is present');
+  ok(!t.includes('Outlook, Hotmail or Microsoft 365') && !/Outlook email connects/i.test(t) && !/switched on for your account/.test(t), 'Outlook mail is hidden and not mentioned when microsoft.clientId is unset');
   const tryMail = async (list, addr, pw, host, expectRe, label) => {
     await tap(btn(list)); await p.waitForTimeout(250);
     await p.locator('#real-addr').first().fill(addr); await p.locator('#real-pass').first().fill(pw);
@@ -67,9 +81,6 @@ async function run(engineName, engine, label, ctxOpts) {
   else { await p.waitForFunction(() => /is connected/.test(document.body.innerText), null, { timeout: 8000 }).catch(() => {}); t = await txt(); ok(/is connected/.test(t), 'Google sign-in connected'); ok(await p.evaluate(() => /gmail.readonly/.test(window.__gisScope || '') && /calendar.readonly/.test(window.__gisScope || '')), 'one consent asked for both Gmail and Calendar scopes'); await tap(btn('Continue')); }
   if (!CONFIGURED) {
     const WRONG = /didn’t accept those details/;
-    await tap(btn('Outlook, Hotmail or Microsoft 365')); t = await txt();
-    ok(/Connect your Outlook calendar now with a link/.test(t) && /switched on for your account/.test(t) && !/coming soon/i.test(t) && !(await p.locator('input[type=password]').count()), 'Outlook: neutral notice, no coming-soon wording, no password field');
-    await tap(btn('Connect Outlook')); ok(/Connect your Outlook calendar now with a link/.test(await txt()), 'Outlook Connect answers with the calendar-link notice');
     if (PROXY_LIVE) {
       await tryMail('Gmail (Google)', 'fake.person.7731@gmail.com', 'abcd efgh ijkl mnop', '', WRONG, 'Gmail app password (IMAP)');
       await tryMail('iCloud Mail', 'fake.person.7731@icloud.com', 'abcd-efgh-ijkl-mnop', '', WRONG, 'iCloud IMAP');
@@ -97,7 +108,7 @@ async function run(engineName, engine, label, ctxOpts) {
     ok(/isn’t switched on/.test(t) && /Or use a secret iCal link/.test(t) && /Secret address in iCal format/.test(t), 'Google Calendar: sign-in notice + secret iCal link option');
     await tap(btn('Connect Google Calendar')); ok(/isn’t switched on/.test(await txt()), 'Google Calendar Connect answers');
     await tap(btn('Connect with this link')); ok(/paste the calendar link/.test(await txt()), 'empty link → clear message');
-    await tap(btn('Outlook or Microsoft 365 calendar')); t = await txt(); ok(/Connect your Outlook calendar now with a link/.test(t) && /Publish a calendar/.test(t) && !/coming soon/i.test(t), 'Outlook calendar: published ICS link, no coming-soon wording');
+    await tap(btn('Outlook or Microsoft 365 calendar')); t = await txt(); ok(/Publish a calendar/.test(t) && /ICS/.test(t) && !/Outlook email/i.test(t) && !/coming soon/i.test(t), 'Outlook calendar: published ICS link, email is not mentioned');
     if (PROXY_LIVE) {
       const tryCal = async (list, btnRe, user, pw, urlv, re, apiRe, label) => {
         await tap(btn(list)); await p.waitForTimeout(250);
@@ -159,6 +170,46 @@ async function run(engineName, engine, label, ctxOpts) {
   await tap(p.locator('.app-tab', { hasText: 'Inbox' })); t = await txt(); ok(CONFIGURED || /Connect your email/.test(t), 'Inbox: honest empty state');
   await tap(p.locator('.app-tab', { hasText: 'Calendar' })); t = await txt(); ok(!/Silverstone|Sponsor call/.test(t), 'Calendar tab has no made-up events');
   await tap(p.locator('.app-tab', { hasText: 'Connections' })); t = await txt(); ok(!/Xero|Demo controls/.test(t), 'Connections lists only real options');
+  ok(!/Start over|Reset demo/.test(t) && !(await p.locator('#reset-demo, #start-over').count()), 'no Start over or Reset in the customer UI');
+  ok(await p.locator('#dash-select').count(), 'dashboard switcher is in the header');
+  ok(await p.locator('#dash-select option', { hasText: 'Archie Owen Racing' }).count(), 'current dashboard is in the switcher');
+  // places
+  await tap(p.locator('#app-settings'));
+  t = await txt(); ok(/Places/.test(t) && /Sign out of this device/.test(t) && /Delete this dashboard/.test(t), 'Settings has places, delete and sign out');
+  await tap(btn('Add a place'));
+  await p.fill('#place-name', 'Workshop'); await p.fill('#place-addr', 'Unit 4, Silverstone');
+  await tap(btn('Save place'));
+  t = await txt(); ok(/Workshop/.test(t) && /Unit 4/.test(t), 'place saved');
+  await tap(p.locator('.app-tab', { hasText: 'Today' }));
+  await p.fill('#new-task', 'Order parts');
+  if (await p.locator('#new-task-place').count()) await p.selectOption('#new-task-place', { index: 1 });
+  await tap(btn('Add'));
+  t = await txt(); ok(/Order parts/.test(t) && /Workshop/.test(t), 'task tagged to a place');
+  // second dashboard
+  await p.selectOption('#dash-select', '__add__');
+  await p.waitForURL(/start\.html/, { timeout: 8000 }).catch(() => {});
+  await p.waitForTimeout(1000);
+  ok((await p.locator('#acc-name').count()) === 0, 'adding a dashboard skips the account step');
+  await tap(btn('Personal'));
+  await p.fill('#biz-name', 'Personal');
+  await tap(btn('Continue'));
+  await tap(btn("Let’s go"));
+  await tap(btn("I don’t use any of these — skip, I’ll add later"));
+  if (await btn('Go to my dashboard').count()) await tap(btn('Go to my dashboard'));
+  await p.waitForURL(/app\.html/, { timeout: 8000 }).catch(() => {});
+  await p.waitForTimeout(1200);
+  const selName = async () => p.locator('#dash-select option:checked').textContent();
+  t = await txt();
+  ok(/Personal/.test(await selName()), 'header switcher shows the Personal dashboard');
+  ok(!/Email the sponsor deck/.test(t) && !/Order parts/.test(t), 'the new dashboard does not show the other dashboard’s tasks');
+  const racing = await p.locator('#dash-select option', { hasText: 'Archie Owen Racing' }).getAttribute('value');
+  await p.selectOption('#dash-select', racing);
+  await p.waitForTimeout(1800);
+  t = await txt();
+  ok(/Email the sponsor deck/.test(t) && /Order parts/.test(t), 'switching back keeps the first dashboard’s tasks');
+  await p.goto(BASE + 'start.html', { waitUntil: 'domcontentloaded' });
+  await p.waitForURL(/app\.html/, { timeout: 8000 }).catch(() => {});
+  ok(/app\.html/.test(p.url()), 'start.html sends someone who already has a dashboard to the app');
   ok(errs.length === 0, 'no console/page errors' + (errs.length ? ' → ' + errs.join(' | ') : ''));
   await p.screenshot({ path: `/tmp/real-${engineName}-${label}.png` });
   await b.close();

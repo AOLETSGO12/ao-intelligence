@@ -1,5 +1,5 @@
-/* Consumer journey preview: sign-up → business → connect wizard → setting up → dashboard.
-   Demo only. State lives in localStorage on this device. */
+/* Set up a dashboard: account → name and type → connect what you use → your day.
+   State lives in this browser, namespaced per dashboard. */
 (function () {
   "use strict";
   var E = window.AOEngine, S = window.AOStore, C = window.Connectors;
@@ -39,9 +39,20 @@
   }
   function leaveToApp(tab) { state.step = "app"; save(); window.location.href = "app.html#" + (tab || "today"); }
 
-  overBtn.addEventListener("click", function () {
-    S.confirmReset(function () { state = E.newState(); single = null; history.replaceState(null, "", "start.html"); go("account"); overBtn.hidden = true; });
-  });
+  if (overBtn) overBtn.hidden = true;
+
+  function cancelAdd() {
+    var from = "";
+    try { from = sessionStorage.getItem("ao-add-from") || ""; sessionStorage.removeItem("ao-add-from"); } catch (e) {}
+    var id = S.currentId();
+    if (id && !((state.business && state.step === "app"))) {
+      var next = S.deleteDashboard(id);
+      if (from) S.switchTo(from);
+      else if (next) S.switchTo(next);
+    }
+    var ready = S.firstReadyId();
+    window.location.href = ready ? "app.html#today" : "start.html";
+  }
 
   // ---------- shared bits ----------
   function progress() {
@@ -80,6 +91,10 @@
       if (!REAL && pass.value.length < 8) { errs.pass = "Please use at least 8 characters."; bad = true; }
       if (bad) { state.account = { name: name.value.trim(), email: email.value.trim() }; showErrs(); return; }
       state.account = { name: name.value.trim(), email: email.value.trim() };
+      S.setAccount(state.account);
+      if (!S.currentId()) S.beginAdd();
+      state = S.load();
+      state.account = S.account();
       go("business"); // the password is deliberately never stored
     } } });
     function showErrs() {
@@ -99,48 +114,65 @@
     setRoot(card(
       h("p", { class: "j-eyebrow" }, REAL ? "Step 1 · About you" : "Step 1 · Create your account"),
       h("h1", null, "Let’s get your agent started"),
-      h("p", { class: "j-lead" }, "A few quick details, then we’ll set up your business. It takes about 3 minutes."),
+      h("p", { class: "j-lead" }, "A few quick details, then we’ll set up your first dashboard. It takes about 3 minutes."),
       form,
       h("p", { class: "j-fine" }, REAL ? "Your name and email are used to personalise the app and sign your reply drafts. They stay on this device — there’s no account or password to remember." : "This is a preview: your details stay on this device and no real account is created.")));
   }
 
   function stepBusiness() {
-    var b = state.business || { name: "", industry: "motorsport", size: "solo" };
-    var name = h("input", { id: "biz-name", type: "text", autocomplete: "organization", value: b.name, required: true, placeholder: "e.g. Archie Owen Racing" });
+    var b = state.business || { name: "", type: "business", industry: "motorsport", size: "solo" };
+    if (!b.type) b.type = "business";
+    var typ = b.type === "personal" ? "personal" : "business";
+    var name = h("input", { id: "biz-name", type: "text", autocomplete: typ === "personal" ? "off" : "organization", value: b.name, required: true, placeholder: typ === "personal" ? "e.g. Personal" : "e.g. Archie Owen Racing" });
     var ind = h("select", { id: "biz-ind" }, E.INDUSTRIES.map(function (i) { return h("option", { value: i.id, selected: i.id === b.industry ? true : null }, i.label); }));
-    ind.value = b.industry;
+    ind.value = b.industry || "motorsport";
     var size = h("select", { id: "biz-size" }, E.SIZES.map(function (i) { return h("option", { value: i.id }, i.label); }));
-    size.value = b.size;
+    size.value = b.size || "solo";
+    function setType(t) {
+      state.business = { name: name.value.trim(), type: t, industry: ind.value, size: size.value };
+      save(); render();
+    }
+    var typeField = h("div", { class: "j-field" },
+      h("span", { class: "j-label", id: "dash-type-label" }, "What kind of dashboard is this?"),
+      h("div", { class: "j-type-row", role: "group", "aria-labelledby": "dash-type-label" },
+        h("button", { class: "j-type" + (typ === "personal" ? " is-on" : ""), type: "button", "aria-pressed": typ === "personal" ? "true" : "false", on: { click: function () { setType("personal"); } } }, "Personal"),
+        h("button", { class: "j-type" + (typ === "business" ? " is-on" : ""), type: "button", "aria-pressed": typ === "business" ? "true" : "false", on: { click: function () { setType("business"); } } }, "Business")));
     var form = h("form", { class: "j-form", novalidate: true, on: { submit: function (e) {
       e.preventDefault();
       if (!name.value.trim()) {
         var wrap = name.parentNode; wrap.classList.add("has-error");
-        if (!wrap.querySelector(".j-error")) wrap.appendChild(h("p", { class: "j-error", role: "alert" }, "Please tell us what your business is called."));
+        if (!wrap.querySelector(".j-error")) wrap.appendChild(h("p", { class: "j-error", role: "alert" }, typ === "personal" ? "Please give this dashboard a name." : "Please tell us what your business is called."));
         name.focus(); return;
       }
-      state.business = { name: name.value.trim(), industry: ind.value, size: size.value };
+      state.business = { name: name.value.trim(), type: typ, industry: ind.value, size: typ === "personal" ? "solo" : size.value };
+      S.updateCurrent({ name: state.business.name, type: typ, industry: state.business.industry, size: state.business.size });
       if (REAL && (!state.selected.length || (state.selected.length === 1 && state.selected[0] === "bank" && !Object.keys(state.connected).length))) state.selected = REAL_DEFAULT.slice();
       else if (!state.selected.length) state.selected = ["bank"];
       go("w-welcome");
     } } },
-      field("biz-name", "Business name", name),
-      field("biz-ind", "What kind of business?", ind, REAL ? "We use this to word your daily overview." : "We use this to tailor your sample figures and daily overview."),
-      field("biz-size", "Roughly how big?", size),
+      typeField,
+      field("biz-name", typ === "personal" ? "Dashboard name" : "Business name", name),
+      field("biz-ind", typ === "personal" ? "What is this mainly for?" : "What kind of business?", ind, "We use this to word your daily overview."),
+      typ === "business" ? field("biz-size", "Roughly how big?", size) : null,
       h("button", { class: "btn btn-primary j-wide", type: "submit" }, "Continue"));
+    var extra = S.hasReadyDashboard() || (S.list().length > 1);
+    var back = extra
+      ? h("p", { class: "j-back" }, h("button", { class: "link-btn", type: "button", on: { click: cancelAdd } }, "Cancel"))
+      : h("p", { class: "j-back" }, h("button", { class: "link-btn", type: "button", on: { click: function () { go("account"); } } }, "← Back"));
     setRoot(card(
-      h("p", { class: "j-eyebrow" }, "Step 2 · Your business"),
-      h("h1", null, "Tell us about your business"),
-      h("p", { class: "j-lead" }, "Just three quick things — a few seconds."),
+      h("p", { class: "j-eyebrow" }, extra ? "New dashboard" : "Step 2 · Your dashboard"),
+      h("h1", null, typ === "personal" ? "Name this dashboard" : "Tell us about your business"),
+      h("p", { class: "j-lead" }, "Just a few quick things — a few seconds."),
       form,
-      h("p", { class: "j-back" }, h("button", { class: "link-btn", type: "button", on: { click: function () { go("account"); } } }, "← Back"))));
+      back));
   }
 
   function stepWelcome() {
     var who = state.account ? state.account.name.split(/\s+/)[0] : "";
     setRoot(card(
       progress(),
-      h("p", { class: "j-eyebrow" }, "Step 3 · Connect your business"),
-      h("h1", null, who ? "Nice to meet you, " + who + "." : "Let’s connect your business"),
+      h("p", { class: "j-eyebrow" }, "Step 3 · Connect what you use"),
+      h("h1", null, who ? "Nice to meet you, " + who + "." : "Let’s connect what you use"),
       h("p", { class: "j-lead" }, "Takes about 3 minutes. Everything is optional — connect only what you use, and add the rest whenever you like."),
       h("ul", { class: "j-benefits" },
         h("li", null, h("strong", null, "See your money in one place"), " — what came in, what went out, and what’s still owed."),
@@ -490,7 +522,6 @@
   // ---------------------------------------------------------------- mail and calendar
   var SWITCHING_ON = "Sign-in isn’t switched on for this site yet. You can connect with an app password below.";
   var SWITCHING_ON_CAL = "Sign-in isn’t switched on for this site yet. You can connect with a calendar link below.";
-  var MS_MAIL = "Connect your Outlook calendar now with a link. Outlook email connects with Microsoft sign-in once it’s switched on for your account.";
   function hostFor(g, addr, typed) {
     typed = String(typed || "").trim();
     if (typed && typed !== g.host) return typed;
@@ -510,7 +541,7 @@
       h("li", null, "That’s it — " + (rt === "google" ? "Gmail and Google Calendar are both connected in one go." : "Outlook mail and calendar are both connected in one go."))));
     panel.appendChild(h("p", { class: "j-hint" }, "We ask only to " + what + " We can’t send mail, and you can disconnect any time."));
     if (provider.note && itemKey === "mail" && rt === "microsoft") panel.appendChild(h("div", { class: "j-notice", role: "note" }, provider.note));
-    var waitMsg = rt === "microsoft" ? MS_MAIL : (itemKey === "calendar" ? SWITCHING_ON_CAL : SWITCHING_ON);
+    var waitMsg = itemKey === "calendar" ? SWITCHING_ON_CAL : SWITCHING_ON;
     if (!ready) panel.appendChild(h("div", { class: "j-notice", role: "note" }, waitMsg));
     panel.appendChild(errBox());
     var label = itemKey === "mail" ? (rt === "google" ? "Connect Gmail" : "Connect Outlook") : (rt === "google" ? "Connect Google Calendar" : "Connect Outlook calendar");
@@ -541,7 +572,7 @@
         showError("");
         var gh = R.guessHost(a);
         var done = function (hst, kind) {
-          if (kind === "microsoft") { showError("That looks like an Outlook / Microsoft mailbox. Choose “Outlook, Hotmail or Microsoft 365” above — Microsoft doesn’t allow passwords. You can still connect the Outlook calendar with a published link."); return; }
+          if (kind === "microsoft") { showError("That looks like an Outlook, Hotmail or Microsoft 365 mailbox. Microsoft doesn’t allow passwords for this kind of mailbox, so it can’t be connected here. You can still connect an Outlook calendar with a published ICS link."); return; }
           if (kind === "proton") { showError("Proton Mail only allows other apps in through Proton Bridge on your own computer, so it can’t be connected here."); return; }
           if (hst) { rui.vals.host = hst; rui.hostNote = "Found: " + hst; } else rui.hostNote = "We couldn’t find it automatically — please type your provider’s mail server above.";
           render();
@@ -611,9 +642,12 @@
     children.push(panel);
   }
 
+  function mailList() { return (R.visibleMail || function () { return R.MAIL; })(); }
   function realMail(children) {
-    var g = R.MAIL.filter(function (x) { return x.id === rui.provider; })[0];
-    children.push(h("div", { class: "j-field" }, h("label", { id: "pick-label" }, "Which email do you use?"), providerList(R.MAIL)));
+    var list = mailList();
+    if (rui.provider && !list.some(function (x) { return x.id === rui.provider; })) rui.provider = null;
+    var g = list.filter(function (x) { return x.id === rui.provider; })[0];
+    children.push(h("div", { class: "j-field" }, h("label", { id: "pick-label" }, "Which email do you use?"), providerList(list)));
     if (!g) { children.push(h("p", { class: "j-hint" }, "Choose your email provider above.")); return; }
     if (g.oauth) {
       var ready = oauthPanel(g, "read your recent mail and save reply drafts.", "mail", children);
@@ -624,6 +658,10 @@
     var g = R.CAL.filter(function (x) { return x.id === rui.provider; })[0];
     children.push(h("div", { class: "j-field" }, h("label", { id: "pick-label" }, "Which calendar do you use?"), providerList(R.CAL)));
     if (!g) { children.push(h("p", { class: "j-hint" }, "Choose your calendar above.")); return; }
+    var msReady = !!(L && L.configured && L.configured().microsoft);
+    // Outlook calendar stays available via a published ICS link. Microsoft sign-in for calendar
+    // only appears once microsoft.clientId is set — same as Outlook email.
+    if (g.id === "outlook-calendar" && !msReady) { icsPanel(g, children); return; }
     if (g.oauth) {
       var ready = oauthPanel(g, "read your calendar events.", "calendar", children);
       if (!ready) icsPanel(g, children, { nested: true });
@@ -809,7 +847,7 @@
   function render() {
     var params = readHash();
     if (params.help) { overBtn.hidden = true; if (REAL) { setRoot(card(h("h1", null, "This helper link isn’t available"), h("p", { class: "j-lead" }, "Ask the person to connect it themselves from their own device."))); return; } stepHelper(params.help, params["for"] || "Someone"); return; }
-    overBtn.hidden = state.step === "welcome" && !state.account;
+    if (overBtn) overBtn.hidden = true;
     if (state.step === "welcome") state.step = "account";
     if (state.step === "app") { if (!state.business) state.step = "account"; }
     switch (state.step) {
@@ -827,6 +865,26 @@
   (function boot() {
     var params = readHash();
     if (params.help) { render(); return; }
+    var adding = /(?:\?|&)add=1(?:&|$)/.test(window.location.search || "");
+    if (adding) {
+      try { sessionStorage.setItem("ao-add-from", S.currentId() || ""); } catch (e) {}
+      S.beginAdd();
+      state = S.load();
+      if (S.account()) { state.account = S.account(); state.step = "business"; }
+      else state.step = "account";
+      save();
+      history.replaceState(null, "", "start.html");
+      render();
+      return;
+    }
+    // already has a finished dashboard, and this visit isn’t mid-connect
+    if (params.connect === undefined) {
+      var ready = S.firstReadyId();
+      if (ready && (state.step === "app" || !state.business || state.step === "welcome")) {
+        if (S.currentId() !== ready) { S.switchTo(ready); state = S.load(); }
+        window.location.replace("app.html#today"); return;
+      }
+    }
     // coming from the dashboard
     if (params.connect !== undefined) {
       if (!state.business) { state.step = "account"; }

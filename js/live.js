@@ -9,15 +9,30 @@
  * If a provider has no client ID / backend URL configured (js/config.js), route() returns null and the
  * existing simulated flow is used, labelled as sample data. Nothing here ever sends an email.
  *
- * Tokens: kept in this browser's localStorage only (key "ao-live-tokens-v1"). Backend connections store
+ * Tokens: kept in this browser's localStorage only, namespaced per dashboard. Backend connections store
  * an opaque, encrypted "sealed" blob — the backend itself stores nothing.
  */
 (function (root) {
   "use strict";
   var E = root.AOEngine;
-  var TOKEN_KEY = "ao-live-tokens-v1";
+  var LEGACY_TOKEN_KEY = "ao-live-tokens-v1";
   var PENDING_KEY = "ao-oauth-pending-v1";
   var RESULT_KEY = "ao-oauth-result-v1";
+  function tokenKey() {
+    try {
+      var S = root.AOStore;
+      if (S && S.currentId && S.currentId() && S.tokenKey) return S.tokenKey();
+    } catch (e) { /* ignore */ }
+    return LEGACY_TOKEN_KEY;
+  }
+  function withDashId(obj) {
+    try {
+      var S = root.AOStore;
+      var id = S && S.currentId && S.currentId();
+      if (id) obj.dashId = id;
+    } catch (e) { /* ignore */ }
+    return obj;
+  }
 
   // ------------------------------------------------------------ config
   function readConfig() {
@@ -77,9 +92,9 @@
   }
 
   // ------------------------------------------------------------ token store
-  function loadTokens() { try { return JSON.parse(root.localStorage.getItem(TOKEN_KEY) || "{}") || {}; } catch (e) { return {}; } }
-  function saveTokens(t) { try { root.localStorage.setItem(TOKEN_KEY, JSON.stringify(t)); } catch (e) { /* ignore */ } }
-  function clearTokens() { try { root.localStorage.removeItem(TOKEN_KEY); root.localStorage.removeItem(PENDING_KEY); } catch (e) { /* ignore */ } }
+  function loadTokens() { try { return JSON.parse(root.localStorage.getItem(tokenKey()) || "{}") || {}; } catch (e) { return {}; } }
+  function saveTokens(t) { try { root.localStorage.setItem(tokenKey(), JSON.stringify(t)); } catch (e) { /* ignore */ } }
+  function clearTokens() { try { root.localStorage.removeItem(tokenKey()); root.localStorage.removeItem(PENDING_KEY); } catch (e) { /* ignore */ } }
   function setSealed(key, route, sealed) { var t = loadTokens(); t.sealed = t.sealed || {}; t.sealed[key] = { route: route, sealed: sealed }; saveTokens(t); }
 
   // ------------------------------------------------------------ backend client
@@ -411,7 +426,7 @@
     var verifier = randomString(64), state = "ms." + randomString(16);
     return sha256(verifier).then(function (h) {
       var url = msBuildAuthUrl(scopes, state, b64url(h));
-      savePending(Object.assign({ route: "microsoft", verifier: verifier, state: state, scopes: scopes, at: Date.now() }, meta || {}));
+      savePending(withDashId(Object.assign({ route: "microsoft", verifier: verifier, state: state, scopes: scopes, at: Date.now() }, meta || {})));
       if (popup) { popup.location.href = url; return waitForCallback(state, popup); }
       root.location.href = url; // popup blocked: full-page redirect, finished by oauth.html
       return new Promise(function () { /* page is navigating away */ });
@@ -595,7 +610,7 @@
         popup = openPopup();
         var state = rt + "." + randomString(16);
         var url = cfg().backendUrl + "/" + rt + "/start?" + q({ state: state, return_to: redirectUri(), shop: session.detail });
-        savePending({ route: rt, key: key, providerId: session.providerId, providerName: session.providerName, state: state, at: Date.now(), detail: session.detail });
+        savePending(withDashId({ route: rt, key: key, providerId: session.providerId, providerName: session.providerName, state: state, at: Date.now(), detail: session.detail }));
         if (popup) popup.location.href = url; else { root.location.href = url; return new Promise(function () {}); }
         return waitForCallback(state, popup).then(function (p) { return finishBackendCallback(p, session); });
       }
@@ -634,6 +649,7 @@
   function finishRedirect(params) {
     var pend = readPending();
     if (!pend) return Promise.reject(new Error("That sign-in session wasn’t found. Please start again from the dashboard."));
+    if (pend.dashId && root.AOStore && root.AOStore.switchTo) root.AOStore.switchTo(pend.dashId);
     root.localStorage.removeItem(PENDING_KEY);
     if (pend.state && params.state && params.state !== pend.state) return Promise.reject(new Error("That sign-in didn’t match the one we started. Please try again."));
     var sess = { itemKey: pend.key, providerId: pend.providerId, providerName: pend.providerName, route: pend.route, detail: pend.detail };

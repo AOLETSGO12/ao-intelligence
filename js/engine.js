@@ -809,7 +809,7 @@ var AOEngine = (() => {
 
   // ../ao-intelligence-app/snack-sdk54/src/engine/model.ts
   function newState() {
-    return { v: 1, step: "welcome", cursor: 0, selected: ["bank"], connected: {}, skipped: [], requests: {}, doneTasks: [], replied: [], edits: {}, userTasks: [], userTargets: [] };
+    return { v: 1, step: "welcome", cursor: 0, selected: ["bank"], connected: {}, skipped: [], requests: {}, doneTasks: [], replied: [], edits: {}, userTasks: [], userTargets: [], places: [], eventPlaces: {} };
   }
   function parseState(raw) {
     if (!raw) return newState();

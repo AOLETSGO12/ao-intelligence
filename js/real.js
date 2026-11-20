@@ -5,8 +5,16 @@
  * Nothing here talks to a server. */
 (function (root) {
   "use strict";
-  var BANK_KEY = "ao-local-bank-v1";
-  var CAL_KEY = "ao-local-calendar-v1";
+  var LEGACY_BANK = "ao-local-bank-v1";
+  var LEGACY_CAL = "ao-local-calendar-v1";
+  function bankKey() {
+    try { var S = root.AOStore; if (S && S.currentId && S.currentId() && S.bankKey) return S.bankKey(); } catch (e) {}
+    return LEGACY_BANK;
+  }
+  function calKey() {
+    try { var S = root.AOStore; if (S && S.currentId && S.currentId() && S.calKey) return S.calKey(); } catch (e) {}
+    return LEGACY_CAL;
+  }
 
   // ------------------------------------------------------------------ small helpers
   function pad(n) { return (n < 10 ? "0" : "") + n; }
@@ -195,16 +203,16 @@
     return keep.concat(incoming.rows).sort(function (a, b) { return a.date + a.time < b.date + b.time ? -1 : 1; });
   }
   function saveBank(parsed, meta) {
-    var cur = readJson(BANK_KEY) || { rows: [] };
+    var cur = readJson(bankKey()) || { rows: [] };
     var rows = mergeBank(cur.rows, parsed);
     var cutoff = addDays(rows.length ? rows[rows.length - 1].date : "2000-01-01", -400);
     rows = rows.filter(function (r) { return r.date >= cutoff; });
-    var ok = writeJson(BANK_KEY, { rows: rows, updated: new Date().toISOString(), file: (meta && meta.file) || "", bank: (meta && meta.bank) || "", count: rows.length });
+    var ok = writeJson(bankKey(), { rows: rows, updated: new Date().toISOString(), file: (meta && meta.file) || "", bank: (meta && meta.bank) || "", count: rows.length });
     if (!ok) throw new Error("This browser wouldn’t let us save that much data on this device. Try a shorter date range.");
     return { count: rows.length, added: parsed.rows.length };
   }
-  function localBank() { var b = readJson(BANK_KEY); return b ? b : null; }
-  function clearBank() { try { root.localStorage.removeItem(BANK_KEY); } catch (e) { /* ignore */ } }
+  function localBank() { var b = readJson(bankKey()); return b ? b : null; }
+  function clearBank() { try { root.localStorage.removeItem(bankKey()); } catch (e) { /* ignore */ } }
 
   // ------------------------------------------------------------------ calendar file (.ics) kept on this device
   function eventsFromIcs(text, tz) {
@@ -216,12 +224,12 @@
   }
   function saveCalendarFile(text, tz, name) {
     var ev = eventsFromIcs(text, tz);
-    var ok = writeJson(CAL_KEY, { events: ev, updated: new Date().toISOString(), file: name || "" });
+    var ok = writeJson(calKey(), { events: ev, updated: new Date().toISOString(), file: name || "" });
     if (!ok) throw new Error("This browser wouldn’t let us save that calendar on this device.");
     return ev.length;
   }
-  function localCalendar() { return readJson(CAL_KEY); }
-  function clearCalendar() { try { root.localStorage.removeItem(CAL_KEY); } catch (e) { /* ignore */ } }
+  function localCalendar() { return readJson(calKey()); }
+  function clearCalendar() { try { root.localStorage.removeItem(calKey()); } catch (e) { /* ignore */ } }
 
   // ------------------------------------------------------------------ guides
   // Email and calendar providers. Google and Microsoft use their own sign-in when it's switched on; every other
@@ -405,10 +413,15 @@
     "tsb": "TSB: online banking → your account → Export → CSV.",
   };
 
+  function visibleMail() {
+    var ms = false;
+    try { ms = !!(root.AOLive && root.AOLive.configured && root.AOLive.configured().microsoft); } catch (e) {}
+    return MAIL.filter(function (p) { return p.id !== "outlook" || ms; });
+  }
   root.AOReal = {
     parseStatement: parseStatement, parseCsv: parseCsv, parseOfx: parseOfx, parseDate: parseDate, parseAmount: parseAmount,
     mergeBank: mergeBank, saveBank: saveBank, localBank: localBank, clearBank: clearBank,
     saveCalendarFile: saveCalendarFile, localCalendar: localCalendar, clearCalendar: clearCalendar, eventsFromIcs: eventsFromIcs,
-    MAIL: MAIL, CAL: CAL, guessHost: guessHost, BANK_TIPS: BANK_TIPS, guessCategory: guessCategory, BANK_KEY: BANK_KEY, CAL_KEY: CAL_KEY,
+    MAIL: MAIL, CAL: CAL, guessHost: guessHost, BANK_TIPS: BANK_TIPS, guessCategory: guessCategory, BANK_KEY: bankKey, CAL_KEY: calKey, visibleMail: visibleMail,
   };
 })(typeof window !== "undefined" ? window : globalThis);

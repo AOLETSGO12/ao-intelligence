@@ -1672,3 +1672,92 @@ td.table-amount {
     padding-bottom: 0;
   }
 }
+
+
+/* Dashboard type (Personal / Business) on the setup journey */
+.j-type-row {
+  display: flex;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+}
+.j-type {
+  font: inherit;
+  font-weight: 600;
+  padding: 0.65rem 1.1rem;
+  border-radius: 999px;
+  border: 1px solid var(--line-strong);
+  background: var(--surface);
+  color: var(--ink);
+  cursor: pointer;
+  min-height: 44px;
+}
+.j-type.is-on {
+  background: var(--teal, #1b5f56);
+  color: #fff;
+  border-color: transparent;
+}
+.j-label {
+  display: block;
+  font-weight: 600;
+  margin-bottom: 0.4rem;
+}
+
+/* Places and settings */
+.place-list, .settings-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+.place-row, .settings-block {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.5rem 1rem;
+}
+.place-row .place-meta, .task small.task-place {
+  display: block;
+  color: var(--ink-subtle, #5c5a55);
+  font-weight: 400;
+  font-size: 0.85em;
+}
+.place-form, .settings-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+  margin-top: 0.75rem;
+}
+.event-place {
+  margin-top: 0.35rem;
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+}
+.event-place select, .add-row select, .task.is-editing select, .task-place-select {
+  font: inherit;
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  padding: 0.4rem 0.6rem;
+  background: var(--surface);
+  max-width: 100%;
+}
+.dash-switcher select {
+  max-width: min(22rem, 70vw);
+}
+@media (max-width: 640px) {
+  .dash-header .dash-switcher {
+    grid-column: 1 / -1;
+    min-width: 0;
+  }
+  .dash-header .dash-switcher select {
+    width: 100%;
+    max-width: none;
+  }
+  .dash-header .dash-header-actions {
+    grid-column: 1 / -1;
+  }
+}

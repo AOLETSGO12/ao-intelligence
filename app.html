@@ -13,8 +13,8 @@
   <meta name="apple-mobile-web-app-title" content="AO Intelligence">
   <link rel="apple-touch-icon" href="assets/apple-touch-icon.png">
   <link rel="manifest" href="manifest.webmanifest">
-  <link rel="stylesheet" href="css/styles.css?v=20261120f">
-  <link rel="stylesheet" href="css/journey.css?v=20261120f">
+  <link rel="stylesheet" href="css/styles.css?v=20261120g">
+  <link rel="stylesheet" href="css/journey.css?v=20261120g">
   <script>
   /* If anything fails to load (for example old cached files), say so and offer a one-tap fix instead of a dead page. */
   (function () {
@@ -43,15 +43,15 @@
     window.AO_FIX = fix;
   })();
   </script>
-  <script defer src="js/brand.js?v=20261120f"></script>
-  <script defer src="js/engine.js?v=20261120f"></script>
-  <script defer src="js/config.js?v=20261120f"></script>
-  <script defer src="js/ics.js?v=20261120f"></script>
-  <script defer src="js/real.js?v=20261120f"></script>
-  <script defer src="js/live.js?v=20261120f"></script>
-  <script defer src="js/ui.js?v=20261120f"></script>
-  <script defer src="js/app.js?v=20261120f"></script>
-  <script defer src="js/pwa.js?v=20261120f"></script>
+  <script defer src="js/brand.js?v=20261120g"></script>
+  <script defer src="js/engine.js?v=20261120g"></script>
+  <script defer src="js/config.js?v=20261120g"></script>
+  <script defer src="js/ics.js?v=20261120g"></script>
+  <script defer src="js/real.js?v=20261120g"></script>
+  <script defer src="js/live.js?v=20261120g"></script>
+  <script defer src="js/ui.js?v=20261120g"></script>
+  <script defer src="js/app.js?v=20261120g"></script>
+  <script defer src="js/pwa.js?v=20261120g"></script>
 </head>
 <body class="journey-page app-page">
   <span data-brand-title="Your day" hidden></span>
@@ -65,10 +65,15 @@
         </picture>
       </a>
       <div class="dash-header-right">
-        <span class="app-biz" id="app-biz"></span>
+        <div class="business-switcher dash-switcher" id="dash-switcher">
+          <label for="dash-select">Dashboard</label>
+          <select id="dash-select" aria-label="Switch dashboard"></select>
+        </div>
         <span class="demo-badge" id="data-badge" hidden>Sample data</span>
-        <button class="btn btn-ghost btn-small" type="button" id="refresh-live" hidden>Refresh</button>
-        <button class="btn btn-ghost btn-small" type="button" id="reset-demo">Start over</button>
+        <div class="dash-header-actions">
+          <button class="btn btn-ghost btn-small" type="button" id="refresh-live" hidden>Refresh</button>
+          <button class="btn btn-ghost btn-small" type="button" id="app-settings">Settings</button>
+        </div>
       </div>
     </div>
   </header>
