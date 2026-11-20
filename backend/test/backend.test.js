@@ -316,3 +316,87 @@ test("imap/detect: well-known providers resolve without any network", async () =
   assert.equal((await detectImap(none, "a@btinternet.com")).host, "mail.btinternet.com");
   assert.equal((await detectImap(none, "a@unknown-domain-xyz.org")).host, "");
 });
+
+test("caldav follows Apple-style partition redirects, keeps PROPFIND + auth + body, and resolves hrefs on the new host", async () => {
+  const { discoverCalendars, dav, normalizeUser, normalizePass } = await import("../src/caldav.js");
+  assert.equal(normalizeUser("  Name@iCloud.com "), "name@icloud.com");
+  assert.equal(normalizePass("abcd efgh-ijkl mnop"), "abcdefgh-ijklmnop");
+  const calls = [];
+  const dav207 = (xml) => new Response(xml, { status: 207, headers: { "content-type": "application/xml; charset=utf-8" } });
+  const fetchImpl = async (url, init = {}) => {
+    calls.push({ url, method: init.method, redirect: init.redirect, auth: init.headers.authorization, body: init.body, ua: init.headers["user-agent"], depth: init.headers.depth, ct: init.headers["content-type"] });
+    if (url === "https://caldav.icloud.com/" && init.method === "PROPFIND") {
+      return new Response("", { status: 302, headers: { location: "https://p56-caldav.icloud.com/" } });
+    }
+    if (url === "https://p56-caldav.icloud.com/" && init.method === "PROPFIND") {
+      return dav207(`<?xml version="1.0"?><d:multistatus xmlns:d="DAV:" xmlns:c="urn:ietf:params:xml:ns:caldav"><d:response><d:href>/</d:href><d:propstat><d:prop><d:resourcetype><d:collection/></d:resourcetype><d:current-user-principal><d:href>/12345/principal/</d:href></d:current-user-principal></d:prop></d:propstat></d:response></d:multistatus>`);
+    }
+    if (url === "https://p56-caldav.icloud.com/12345/principal/" && init.method === "PROPFIND") {
+      return dav207(`<?xml version="1.0"?><d:multistatus xmlns:d="DAV:" xmlns:c="urn:ietf:params:xml:ns:caldav"><d:response><d:propstat><d:prop><c:calendar-home-set><d:href>/12345/calendars/</d:href></c:calendar-home-set></d:prop></d:propstat></d:response></d:multistatus>`);
+    }
+    if (url === "https://p56-caldav.icloud.com/12345/calendars/" && init.method === "PROPFIND") {
+      return dav207(`<?xml version="1.0"?><d:multistatus xmlns:d="DAV:" xmlns:c="urn:ietf:params:xml:ns:caldav"><d:response><d:href>/12345/calendars/</d:href><d:propstat><d:prop><d:resourcetype><d:collection/></d:resourcetype></d:prop></d:propstat></d:response><d:response><d:href>/12345/calendars/home/</d:href><d:propstat><d:prop><d:resourcetype><d:collection/><c:calendar/></d:resourcetype><c:supported-calendar-component-set><c:comp name="VEVENT"/></c:supported-calendar-component-set></d:prop></d:propstat></d:response></d:multistatus>`);
+    }
+    throw new Error("unexpected " + init.method + " " + url);
+  };
+  const cals = await discoverCalendars(fetchImpl, "https://caldav.icloud.com/", "  Name@iCloud.com ", "abcd efgh-ijkl mnop");
+  assert.deepEqual(cals, ["https://p56-caldav.icloud.com/12345/calendars/home/"]);
+  // Every hop stays a PROPFIND (a 302 followed automatically would have become GET).
+  assert.ok(calls.length >= 4);
+  for (const c of calls) {
+    assert.equal(c.method, "PROPFIND");
+    assert.equal(c.redirect, "manual");
+    assert.match(c.auth, /^Basic /);
+    assert.match(c.body, /current-user-principal|supported-calendar-component-set/);
+    assert.match(c.ua, /AO-Intelligence/);
+    assert.match(c.ct, /application\/xml; charset=utf-8/);
+    const decoded = Buffer.from(c.auth.slice(6), "base64").toString("utf8");
+    assert.equal(decoded, "name@icloud.com:abcdefgh-ijklmnop");
+  }
+  assert.equal(calls[0].url, "https://caldav.icloud.com/");
+  assert.equal(calls[1].url, "https://p56-caldav.icloud.com/");
+});
+
+test("caldav error mapping: wrong password, redirect failure, no calendars", async () => {
+  const { discoverCalendars, HttpError: HE } = await import("../src/caldav.js");
+  const { HttpError } = await import("../src/util.js");
+  await assert.rejects(
+    discoverCalendars(async () => new Response("", { status: 401 }), "https://caldav.icloud.com/", "a@b.com", "x"),
+    (e) => e instanceof HttpError && e.status === 401 && e.code === "login" && /didn’t accept that username and app password/.test(e.message)
+  );
+  await assert.rejects(
+    discoverCalendars(async () => new Response("", { status: 403 }), "https://caldav.icloud.com/", "a@b.com", "x"),
+    (e) => e instanceof HttpError && e.status === 401 && e.code === "login"
+  );
+  await assert.rejects(
+    discoverCalendars(async () => new Response("", { status: 302 }), "https://caldav.icloud.com/", "a@b.com", "x"),
+    (e) => e instanceof HttpError && e.code === "redirect" && /no address/.test(e.message)
+  );
+  // Signed in, but the home folder has no VEVENT calendars
+  const emptyHome = async (url, init) => {
+    if (url === "https://dav.example.com/") return new Response('<d:multistatus xmlns:d="DAV:"><d:response><d:propstat><d:prop><d:current-user-principal><d:href>/me/</d:href></d:current-user-principal></d:prop></d:propstat></d:response></d:multistatus>', { status: 207 });
+    if (url === "https://dav.example.com/me/") return new Response('<d:multistatus xmlns:d="DAV:" xmlns:c="urn:ietf:params:xml:ns:caldav"><d:response><d:propstat><d:prop><c:calendar-home-set><d:href>/cals/</d:href></c:calendar-home-set></d:prop></d:propstat></d:response></d:multistatus>', { status: 207 });
+    return new Response('<d:multistatus xmlns:d="DAV:"><d:response><d:href>/cals/</d:href><d:propstat><d:prop><d:resourcetype><d:collection/></d:resourcetype></d:prop></d:propstat></d:response></d:multistatus>', { status: 207 });
+  };
+  await assert.rejects(
+    discoverCalendars(emptyHome, "https://dav.example.com/", "me", "pw"),
+    (e) => e instanceof HttpError && e.status === 422 && e.code === "nocal" && /didn’t find any calendars/.test(e.message) && !/server address/.test(e.message)
+  );
+});
+
+test("caldav/connect normalises the email and strips spaces from the app password", async () => {
+  const dav = (xml) => new Response(xml, { status: 207 });
+  const seen = [];
+  const fetchImpl = async (url, init = {}) => {
+    if (init.headers && init.headers.authorization) seen.push(Buffer.from(init.headers.authorization.slice(6), "base64").toString("utf8"));
+    if (init.method === "PROPFIND" && url === "https://dav.example.com/") return dav('<d:multistatus xmlns:d="DAV:"><d:response><d:propstat><d:prop><d:resourcetype><d:collection/><c:calendar xmlns:c="urn:ietf:params:xml:ns:caldav"/></d:resourcetype></d:prop></d:propstat></d:response></d:multistatus>');
+    return new Response("", { status: 401 });
+  };
+  const h = createHandler({ fetchImpl });
+  const r = await call(h, ENV, "/caldav/connect", { method: "POST", body: { url: "https://dav.example.com/", username: "  Name@iCloud.com ", password: "abcd efgh-ijkl mnop" } });
+  assert.equal(r.status, 200);
+  const j = await r.json();
+  assert.match(j.account, /name@icloud.com/);
+  assert.ok(seen.length);
+  assert.equal(seen[0], "name@icloud.com:abcdefgh-ijklmnop");
+});

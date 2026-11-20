@@ -1,76 +1,139 @@
 // CalDAV (iCloud, Zoho, Fastmail, Nextcloud, ...) and Calendly: read-only event lookups.
+//
+// iCloud is particular: a PROPFIND to caldav.icloud.com often 301/302/307s to a partition
+// host such as p56-caldav.icloud.com. The Fetch "follow" mode can change PROPFIND into GET,
+// drop the body, and strip Authorization on the cross-origin hop — which then looks like
+// "we signed in but couldn’t find a calendar / server details wrong". We follow redirects
+// ourselves, keeping the method, body and Basic auth, and resolve hrefs from the final URL.
 import { HttpError, fetchWithTimeout, assertPublicHost, wall, addDaysIso, pad } from "./util.js";
 import { parseIcs } from "./ics.js";
 
-const basic = (u, p) => "Basic " + btoa(String.fromCharCode(...new TextEncoder().encode(`${u}:${p}`)));
+const UA = "AO-Intelligence/1.0 (CalDAV)";
+const MAX_REDIRECTS = 8;
+
+export function normalizeUser(s) { return String(s || "").trim().toLowerCase(); }
+/** Strip spaces only (Apple/Google/Yahoo codes are often shown in groups). Keep dashes. */
+export function normalizePass(s) { return String(s || "").replace(/\s+/g, ""); }
+
+const basic = (u, p) => "Basic " + btoa(String.fromCharCode(...new TextEncoder().encode(`${normalizeUser(u)}:${normalizePass(p)}`)));
 const tagRe = (name) => new RegExp(`<(?:[\\w-]+:)?${name}[^>]*>([\\s\\S]*?)</(?:[\\w-]+:)?${name}>`, "i");
 const tagAll = (name) => new RegExp(`<(?:[\\w-]+:)?${name}[^>]*>([\\s\\S]*?)</(?:[\\w-]+:)?${name}>`, "gi");
 const xmlText = (s) => String(s).replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, "$1").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&amp;/g, "&");
 
-function absolute(base, href) { try { return new URL(href, base).toString(); } catch (e) { return null; } }
+export function absolute(base, href) { try { return new URL(href, base).toString(); } catch (e) { return null; } }
 
-async function dav(fetchImpl, method, url, auth, body, depth) {
-  const r = await fetchWithTimeout(fetchImpl, url, { method, headers: { authorization: auth, "content-type": "application/xml; charset=utf-8", depth: String(depth), accept: "application/xml, text/xml, */*" }, body, redirect: "follow" }, 20000);
-  if (r.status === 401 || r.status === 403) throw new HttpError(401, "The calendar server didn’t accept that username and app password.", "login");
-  if (r.status !== 207 && !r.ok) throw new HttpError(502, "The calendar server answered with an error (" + r.status + ").");
-  return r.text();
+function hrefInside(xml, tag) {
+  const block = (String(xml).match(tagRe(tag)) || [])[1];
+  if (block == null) return null;
+  const h = block.match(tagRe("href"));
+  return h ? xmlText(h[1]).trim() : null;
+}
+
+function logCal(log, ev, data) {
+  if (!log) return;
+  try { log(ev, data); } catch (e) { /* never let logging break a connection */ }
+}
+
+/** One CalDAV request. Follows 301/302/303/307/308 by hand, keeping method, body and auth. */
+export async function dav(fetchImpl, method, url, auth, body, depth, log) {
+  let current = url;
+  for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
+    let parsed;
+    try { parsed = new URL(current); } catch (e) { throw new HttpError(502, "The calendar server sent a redirect we couldn’t follow.", "redirect"); }
+    assertPublicHost(parsed.hostname);
+    if (parsed.protocol !== "https:") throw new HttpError(400, "CalDAV addresses must start with https://");
+    let r;
+    try {
+      r = await fetchWithTimeout(fetchImpl, current, {
+        method,
+        headers: {
+          authorization: auth,
+          "content-type": "application/xml; charset=utf-8",
+          depth: String(depth),
+          accept: "application/xml, text/xml, */*",
+          "user-agent": UA
+        },
+        body,
+        redirect: "manual"
+      }, 20000);
+    } catch (e) {
+      if (e instanceof HttpError) throw e;
+      throw new HttpError(502, "We couldn’t reach the calendar server. Please try again.", "network");
+    }
+    const loc = r.headers.get("location") || r.headers.get("Location") || "";
+    logCal(log, "caldav", { method, host: parsed.hostname, path: parsed.pathname, status: r.status, hop, redirect: loc ? "yes" : "no" });
+    if ([301, 302, 303, 307, 308].includes(r.status)) {
+      if (!loc) throw new HttpError(502, "The calendar server sent a redirect with no address.", "redirect");
+      const next = absolute(current, loc);
+      if (!next) throw new HttpError(502, "The calendar server sent a redirect we couldn’t follow.", "redirect");
+      try { await r.arrayBuffer(); } catch (e) { /* ignore */ }
+      current = next;
+      continue;
+    }
+    if (r.status === 401 || r.status === 403) throw new HttpError(401, "The calendar server didn’t accept that username and app password.", "login");
+    if (r.status !== 207 && !r.ok) throw new HttpError(502, "The calendar server answered with an error (" + r.status + ").", "http");
+    return { text: await r.text(), url: current, status: r.status };
+  }
+  throw new HttpError(502, "The calendar server kept redirecting and we stopped following.", "redirect");
 }
 
 const PROPFIND_ROOT = `<?xml version="1.0"?><d:propfind xmlns:d="DAV:" xmlns:c="urn:ietf:params:xml:ns:caldav"><d:prop><d:resourcetype/><d:current-user-principal/><c:calendar-home-set/></d:prop></d:propfind>`;
 const PROPFIND_HOME = `<?xml version="1.0"?><d:propfind xmlns:d="DAV:" xmlns:c="urn:ietf:params:xml:ns:caldav"><d:prop><d:resourcetype/><d:displayname/><c:supported-calendar-component-set/></d:prop></d:propfind>`;
 
 /** Find the calendar collections behind a CalDAV address. */
-export async function discoverCalendars(fetchImpl, startUrl, username, password) {
+export async function discoverCalendars(fetchImpl, startUrl, username, password, opts) {
+  const log = opts && opts.log;
   const u = new URL(startUrl);
   assertPublicHost(u.hostname);
   if (u.protocol !== "https:") throw new HttpError(400, "CalDAV addresses must start with https://");
   const auth = basic(username, password);
-  const firstXml = await dav(fetchImpl, "PROPFIND", u.toString(), auth, PROPFIND_ROOT, 0);
-  const firstType = (firstXml.match(tagRe("resourcetype")) || [])[1] || "";
-  if (/<(?:[\w-]+:)?calendar\s*\/?>/i.test(firstType)) return [u.toString()];
+  const first = await dav(fetchImpl, "PROPFIND", u.toString(), auth, PROPFIND_ROOT, 0, log);
+  const firstType = (first.text.match(tagRe("resourcetype")) || [])[1] || "";
+  if (/<(?:[\w-]+:)?calendar(?:\s|\/|>)/i.test(firstType)) return [first.url];
   let home = null;
-  const homeSet = firstXml.match(/<(?:[\w-]+:)?calendar-home-set[^>]*>\s*<(?:[\w-]+:)?href[^>]*>([^<]+)</i);
-  if (homeSet) home = absolute(u.toString(), xmlText(homeSet[1]));
+  const homeHref = hrefInside(first.text, "calendar-home-set");
+  if (homeHref) home = absolute(first.url, homeHref);
   if (!home) {
-    const principal = firstXml.match(/<(?:[\w-]+:)?current-user-principal[^>]*>\s*<(?:[\w-]+:)?href[^>]*>([^<]+)</i);
-    if (principal) {
-      const pUrl = absolute(u.toString(), xmlText(principal[1]));
+    const principalHref = hrefInside(first.text, "current-user-principal");
+    if (principalHref) {
+      const pUrl = absolute(first.url, principalHref);
+      if (!pUrl) throw new HttpError(502, "The calendar server sent a redirect we couldn’t follow.", "redirect");
       assertPublicHost(new URL(pUrl).hostname);
-      const pXml = await dav(fetchImpl, "PROPFIND", pUrl, auth, PROPFIND_ROOT, 0);
-      const hs = pXml.match(/<(?:[\w-]+:)?calendar-home-set[^>]*>\s*<(?:[\w-]+:)?href[^>]*>([^<]+)</i);
-      if (hs) home = absolute(pUrl, xmlText(hs[1]));
+      const p = await dav(fetchImpl, "PROPFIND", pUrl, auth, PROPFIND_ROOT, 0, log);
+      const hs = hrefInside(p.text, "calendar-home-set");
+      if (hs) home = absolute(p.url, hs);
     }
   }
-  if (!home) { // as a last resort treat the given address itself as the home
-    home = u.toString();
-  }
+  if (!home) home = first.url;
   assertPublicHost(new URL(home).hostname);
-  const homeXml = await dav(fetchImpl, "PROPFIND", home, auth, PROPFIND_HOME, 1);
+  const listed = await dav(fetchImpl, "PROPFIND", home, auth, PROPFIND_HOME, 1, log);
   const cals = [];
-  (homeXml.match(tagAll("response")) || []).forEach((resp) => {
+  (listed.text.match(tagAll("response")) || []).forEach((resp) => {
     const href = (resp.match(tagRe("href")) || [])[1];
     if (!href) return;
     const rtype = (resp.match(tagRe("resourcetype")) || [])[1] || "";
-    if (!/<(?:[\w-]+:)?calendar\s*\/?>/i.test(rtype)) return;
+    if (!/<(?:[\w-]+:)?calendar(?:\s|\/|>)/i.test(rtype)) return;
     const comps = (resp.match(tagRe("supported-calendar-component-set")) || [])[1];
     if (comps && !/VEVENT/i.test(comps)) return;
-    const abs = absolute(home, xmlText(href));
+    const abs = absolute(listed.url, xmlText(href));
     if (abs) cals.push(abs);
   });
-  if (!cals.length) throw new HttpError(422, "We signed in but couldn’t find a calendar there. Check the server address.");
+  logCal(log, "caldav-found", { host: new URL(home).hostname, count: cals.length });
+  if (!cals.length) throw new HttpError(422, "We signed in, but didn’t find any calendars in that account.", "nocal");
   return cals.slice(0, 8);
 }
 
 function davStamp(iso, endOfDay) { return iso.replace(/-/g, "") + (endOfDay ? "T235959Z" : "T000000Z"); }
 
-export async function fetchCaldavEvents(fetchImpl, cals, username, password, { from, to, tz }) {
+export async function fetchCaldavEvents(fetchImpl, cals, username, password, { from, to, tz }, opts) {
+  const log = opts && opts.log;
   const auth = basic(username, password);
   const body = `<?xml version="1.0"?><c:calendar-query xmlns:d="DAV:" xmlns:c="urn:ietf:params:xml:ns:caldav"><d:prop><c:calendar-data/></d:prop><c:filter><c:comp-filter name="VCALENDAR"><c:comp-filter name="VEVENT"><c:time-range start="${davStamp(addDaysIso(from, -1))}" end="${davStamp(addDaysIso(to, 1), true)}"/></c:comp-filter></c:comp-filter></c:filter></c:calendar-query>`;
   const out = [];
   for (const c of cals) {
     assertPublicHost(new URL(c).hostname);
-    const xml = await dav(fetchImpl, "REPORT", c, auth, body, 1);
-    (xml.match(tagAll("calendar-data")) || []).forEach((m) => {
+    const xml = await dav(fetchImpl, "REPORT", c, auth, body, 1, log);
+    (xml.text.match(tagAll("calendar-data")) || []).forEach((m) => {
       const ics = xmlText((m.match(tagRe("calendar-data")) || [])[1] || "");
       if (/BEGIN:VCALENDAR/i.test(ics)) out.push(...parseIcs(ics, { from, to, tz }));
     });

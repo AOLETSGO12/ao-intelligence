@@ -14,7 +14,7 @@ import { seal, unseal, signState, verifyState } from "./seal.js";
 import { HttpError, wall, addDaysIso, assertPublicHost } from "./util.js";
 import { ImapClient, connectTls, listNeedingReply, buildDraft, findDraftsFolder, appendDraft } from "./imap.js";
 import { fetchIcs, parseIcs, windowFor } from "./ics.js";
-import { discoverCalendars, fetchCaldavEvents, calendlyUser, calendlyEvents } from "./caldav.js";
+import { discoverCalendars, fetchCaldavEvents, calendlyUser, calendlyEvents, normalizeUser, normalizePass } from "./caldav.js";
 import * as TL from "./truelayer.js";
 import * as ST from "./stripe.js";
 import * as SH from "./shopify.js";
@@ -176,9 +176,12 @@ export function createHandler({ fetchImpl = fetch, openImap = (host) => connectT
       return json(env, request, { sealed: await seal(env.SEAL_KEY, { t: "ics", url: String(body.url).replace(/^webcal:/i, "https:") }), account: host + (n ? "" : " (no events in the next 2 weeks)") });
     }
     if (path === "/caldav/connect") {
-      if (!body.username || !body.password) throw new HttpError(400, "Please enter the username and app password.");
-      const cals = await discoverCalendars(fetchImpl, String(body.url || ""), String(body.username), String(body.password));
-      return json(env, request, { sealed: await seal(env.SEAL_KEY, { t: "caldav", cals, user: String(body.username), pass: String(body.password) }), account: `${body.username} (${cals.length} ${cals.length === 1 ? "calendar" : "calendars"})` });
+      const user = normalizeUser(body.username);
+      const pass = normalizePass(body.password);
+      if (!user || !pass) throw new HttpError(400, "Please enter the username and app password.");
+      const log = (ev, data) => { try { console.log(JSON.stringify({ ev, ...data })); } catch (e) { /* ignore */ } };
+      const cals = await discoverCalendars(fetchImpl, String(body.url || ""), user, pass, { log });
+      return json(env, request, { sealed: await seal(env.SEAL_KEY, { t: "caldav", cals, user, pass }), account: `${user} (${cals.length} ${cals.length === 1 ? "calendar" : "calendars"})` });
     }
     if (path === "/calendly/connect") {
       const u = await calendlyUser(fetchImpl, String(body.token || ""));
@@ -213,7 +216,7 @@ export function createHandler({ fetchImpl = fetch, openImap = (host) => connectT
         const w = windowFor(days, tz);
         let events;
         if (s.t === "ics") events = parseIcs(await fetchIcs(s.url, fetchImpl), { ...w, tz });
-        else if (s.t === "caldav") events = await fetchCaldavEvents(fetchImpl, s.cals, s.user, s.pass, { ...w, tz });
+        else if (s.t === "caldav") events = await fetchCaldavEvents(fetchImpl, s.cals, s.user, s.pass, { ...w, tz }, { log: (ev, data) => { try { console.log(JSON.stringify({ ev, ...data })); } catch (e) {} } });
         else if (s.t === "calendly") events = await calendlyEvents(fetchImpl, s.token, s.uri, { ...w, tz });
         else throw new HttpError(400, "That isn’t a calendar connection.");
         return json(env, request, { events });

@@ -10,8 +10,9 @@ A white-label “managed AI agent” service for small businesses, as a static w
 | --- | --- |
 | Gmail and Google Calendar | **One sign-in** (press Connect, sign in, press Allow). Needs `google.clientId` in `js/config.js`. Until it's set, the button says "Sign-in is being switched on" and Gmail offers an **app password** (IMAP) and Google Calendar a **secret iCal link**. Both fallbacks hide themselves once the client ID is set. |
 | Outlook, Hotmail, Microsoft 365 | **One sign-in** for mail and calendar (Microsoft Graph). Needs `microsoft.clientId`. Microsoft no longer allows passwords for Outlook mail, so mail waits for this sign-in. The calendar can use a published ICS link meanwhile. |
-| iCloud | One form: iCloud address + **app-specific password** (account.apple.com → Sign-In and Security) connects mail (IMAP) and calendar (CalDAV). |
-| Yahoo, AOL, Zoho, Fastmail, GMX, BT, Sky, Virgin Media | Address + app password (or password for BT and Virgin Media), servers pre-filled, with step-by-step guides. Yahoo and Fastmail calendars use CalDAV; Zoho and the rest use a private .ics link. |
+| iCloud Mail | Its own step: iCloud address + **app-specific password** (account.apple.com → Sign-In and Security → App-Specific Passwords), over IMAP. |
+| iCloud Calendar | Its own step: Apple Account email + app-specific password, over CalDAV. The Apple Account email can differ from the mail address; the same app password can be reused. Works even if email comes from another provider. |
+| Yahoo, AOL, Zoho, Fastmail, GMX, BT, Sky, Virgin Media | Address + app password (or the normal password for BT and Virgin Media), servers pre-filled, with a short guide and a button to the provider’s app-password page. Yahoo and Fastmail calendars are separate steps (CalDAV); Zoho and the rest use a private .ics link. |
 | Any other provider | "Find my settings" looks up the mail server from the address (built-in list, Mozilla's ISP database, then MX records), or type the server. Calendars: any CalDAV server or .ics link. |
 | Money | Upload a bank **CSV or OFX statement** (parsed in the browser, kept on the device). A **Stripe restricted key** (`rk_…`) also works through the backend. |
 | Tasks and targets | Add, edit and tick off your own. Suggestions come from real emails and events. |

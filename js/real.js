@@ -226,65 +226,103 @@
   // ------------------------------------------------------------------ guides
   // Email and calendar providers. Google and Microsoft use their own sign-in when it's switched on; every other
   // provider connects with an address + app password (or password) through the AO service, with the server pre-filled.
-  var APPLE = "https://account.apple.com/account/manage";
+  var APPLE = "https://account.apple.com";
   var MAIL = [
     { id: "gmail", name: "Gmail (Google)", oauth: "google", host: "imap.gmail.com",
-      steps: [
-        { t: "Turn on 2-Step Verification for your Google account (skip if it’s already on).", href: "https://myaccount.google.com/signinoptions/twosv", link: "Open 2-Step Verification" },
-        { t: "Create an app password called “AO Intelligence”. Google shows a 16-letter code.", href: "https://myaccount.google.com/apppasswords", link: "Open App passwords" },
-        { t: "Paste your Gmail address and that code below. Spaces in the code don’t matter." } ],
-      note: "School or work Google accounts may have app passwords switched off by their administrator." },
+      note: "School or work Google accounts may have app passwords switched off by their administrator.",
+      pass: { kind: "app", button: "Open Google’s app password page", href: "https://myaccount.google.com/apppasswords",
+        why: "Google doesn’t let other apps use your main password. 2-Step Verification must be on first (skip this if it already is).",
+        steps: [
+          "Turn on 2-Step Verification for your Google account, if it isn’t already on: myaccount.google.com/signinoptions/twosv.",
+          "Open Google’s app password page with the button below.",
+          "Sign in if Google asks, then create an app password called “AO Intelligence”. Google shows a 16-letter code.",
+          "Paste your Gmail address and that code below."
+        ] } },
     { id: "outlook", name: "Outlook, Hotmail or Microsoft 365", oauth: "microsoft", host: "outlook.office365.com",
-      note: "Microsoft no longer allows passwords or app passwords for Outlook.com and Microsoft 365 mail, so Outlook mail connects with Microsoft’s own sign-in." },
-    { id: "icloud-mail", name: "iCloud Mail and Calendar", host: "imap.mail.me.com", calendar: "icloud-calendar", both: true,
-      steps: [
-        { t: "Sign in to your Apple Account and open Sign-In and Security → App-Specific Passwords.", href: APPLE, link: "Open Apple Account" },
-        { t: "Press “+”, name it “AO Intelligence” and copy the password (it looks like abcd-efgh-ijkl-mnop)." },
-        { t: "Enter your iCloud address (@icloud.com, @me.com or @mac.com) and that password. One form connects your mail and your calendar." } ] },
-    { id: "yahoo", name: "Yahoo Mail", host: "imap.mail.yahoo.com", calendar: "yahoo-calendar",
-      steps: [
-        { t: "Open Yahoo Account security and choose “Generate app password”.", href: "https://login.yahoo.com/account/security", link: "Open Yahoo security" },
-        { t: "Name it “AO Intelligence” and copy the password it shows." },
-        { t: "Paste your Yahoo address and that password below." } ] },
+      note: "Microsoft no longer allows passwords or app passwords for Outlook.com and Microsoft 365 mail. Connect your Outlook calendar now with a link. Outlook email connects with Microsoft sign-in once it’s switched on for your account." },
+    { id: "icloud-mail", name: "iCloud Mail", host: "imap.mail.me.com",
+      pass: { kind: "app", button: "Open Apple’s app password page", href: APPLE,
+        why: "Apple doesn’t let other apps use your main Apple Account password.",
+        steps: [
+          "Open your Apple Account with the button below and sign in.",
+          "Go to Sign-In and Security, then App-Specific Passwords.",
+          "Press “+”, name it “AO Intelligence”, and copy the password (it looks like abcd-efgh-ijkl-mnop).",
+          "Enter your iCloud Mail address (@icloud.com, @me.com or @mac.com) and that password below."
+        ] } },
+    { id: "yahoo", name: "Yahoo Mail", host: "imap.mail.yahoo.com",
+      pass: { kind: "app", button: "Open Yahoo’s app password page", href: "https://login.yahoo.com/myaccount/security",
+        why: "Yahoo doesn’t let other apps use your main password.",
+        steps: [
+          "Open Yahoo Account Security with the button below and sign in.",
+          "Choose “Generate app password” (or “Generate and manage app passwords”).",
+          "Name it “AO Intelligence” and copy the password it shows.",
+          "Paste your Yahoo address and that password below."
+        ] } },
     { id: "aol", name: "AOL Mail", host: "imap.aol.com",
-      steps: [
-        { t: "Open AOL account security and generate an app password.", href: "https://login.aol.com/account/security", link: "Open AOL security" },
-        { t: "Name it “AO Intelligence” and copy the password." },
-        { t: "Paste your AOL address and that password below." } ] },
-    { id: "zoho-mail", name: "Zoho Mail", host: "imap.zoho.com", hostAlt: "imap.zoho.eu",
-      steps: [
-        { t: "In Zoho Mail settings, switch on IMAP access (Settings → Mail Accounts → IMAP Access).", href: "https://mail.zoho.com/zm/#settings/all/mailaccounts", link: "Open Zoho Mail settings" },
-        { t: "Create an application-specific password.", href: "https://accounts.zoho.com/home#security/app_password", link: "Open Zoho security" },
-        { t: "Paste your Zoho address and that password. If your account is in Europe the server is imap.zoho.eu." } ] },
-    { id: "fastmail", name: "Fastmail", host: "imap.fastmail.com", calendar: "fastmail-calendar",
-      steps: [
-        { t: "Open Fastmail Settings → Privacy & Security → Integrations and choose “New app password”.", href: "https://app.fastmail.com/settings/security/integrations", link: "Open Fastmail" },
-        { t: "Give it Mail (IMAP) access, name it “AO Intelligence” and copy the password." },
-        { t: "Paste your Fastmail address and that password below." } ] },
+      pass: { kind: "app", button: "Open AOL’s app password page", href: "https://login.aol.com/myaccount/security",
+        why: "AOL doesn’t let other apps use your main password.",
+        steps: [
+          "Open AOL Account Security with the button below and sign in.",
+          "Choose “Generate app password” (or “Generate and manage app passwords”), then Get Started.",
+          "Name it “AO Intelligence” and copy the password it shows.",
+          "Paste your AOL address and that password below."
+        ] } },
+    { id: "zoho-mail", name: "Zoho Mail", host: "imap.zoho.com",
+      pass: { kind: "app", button: "Open Zoho’s app password page", href: "https://accounts.zoho.eu/home#security/app_password",
+        why: "Zoho doesn’t let other apps use your main password. IMAP also has to be switched on.",
+        steps: [
+          "In Zoho Mail, go to Settings → Mail Accounts → IMAP Access and switch IMAP on.",
+          "Open Zoho’s app password page with the button below (Europe). If your account is in the US or elsewhere, use accounts.zoho.com instead.",
+          "Create an application-specific password called “AO Intelligence” and copy it.",
+          "Paste your Zoho address and that password below. European accounts use the server imap.zoho.eu — we’ll fill that in from your address."
+        ] } },
+    { id: "fastmail", name: "Fastmail", host: "imap.fastmail.com",
+      pass: { kind: "app", button: "Open Fastmail’s app password page", href: "https://app.fastmail.com/settings/security/apps",
+        why: "Fastmail doesn’t let other apps use your main password.",
+        steps: [
+          "Open Fastmail with the button below and sign in.",
+          "Go to Settings, then Privacy & Security, then Manage app passwords (or press the button, which opens that page).",
+          "Create a new app password, give it Mail (IMAP) access, name it “AO Intelligence”, and copy it.",
+          "Paste your Fastmail address and that password below."
+        ] } },
     { id: "gmx", name: "GMX", host: "imap.gmx.com",
-      steps: [
-        { t: "In GMX go to Email → Settings → POP3 & IMAP and tick “Enable access to this account via POP3 and IMAP”, then Save.", href: "https://www.gmx.com", link: "Open GMX" },
-        { t: "Using two-step verification? Create an application-specific password under your profile → Security Options. Otherwise your normal password works." },
-        { t: "Paste your GMX address and that password. Addresses ending .de, .at, .ch or .net use the server imap.gmx.net." } ] },
+      pass: { kind: "app", button: "Open GMX’s app password page", href: "https://support.gmx.com/security/2fa/application-specific-passwords.html",
+        why: "If two-step verification is on, GMX doesn’t let other apps use your main password. IMAP also has to be switched on.",
+        steps: [
+          "In GMX go to Email → Settings → POP3 & IMAP, tick “Enable access to this account via POP3 and IMAP”, and Save.",
+          "If you use two-step verification: open the guide with the button below, then in GMX go to your profile → Security Options → Manage application-specific passwords, and create one called “AO Intelligence”.",
+          "If you don’t use two-step verification, your normal GMX password works.",
+          "Paste your GMX address and the password below. Addresses ending .de, .at, .ch or .net use the server imap.gmx.net — we’ll fill that in from your address."
+        ] } },
     { id: "bt", name: "BT Mail", host: "mail.btinternet.com",
-      steps: [
-        { t: "Check you can sign in to BT Mail on the web with your BT email address and password.", href: "https://www.bt.com/mail", link: "Open BT Mail" },
-        { t: "Use your full address (for example name@btinternet.com) and your normal BT Mail password. BT doesn’t use app passwords." },
-        { t: "Paste them below. If it’s refused, reset your password with BT and try again." } ] },
+      pass: { kind: "normal", button: "Open BT Mail", href: "https://www.bt.com/mail",
+        intro: "BT Mail doesn’t use app passwords. Enter the same password you use to sign in to BT Mail on the web.",
+        steps: [
+          "Check you can sign in to BT Mail on the web with your full address (for example name@btinternet.com) and your BT Mail password.",
+          "Paste that same address and password below. If it’s refused, reset the password with BT and try again."
+        ] } },
     { id: "sky", name: "Sky Mail", host: "imap.mail.yahoo.com",
-      steps: [
-        { t: "Sky Mail is run by Yahoo. Open Sky’s “Manage apps” page and generate an app password.", href: "https://www.sky.com/sky-yahoo-mail/manage-apps", link: "Open Sky Mail app passwords" },
-        { t: "Name it “AO Intelligence” and copy the 16-character password." },
-        { t: "Paste your Sky address (name@sky.com) and that password below." } ] },
+      pass: { kind: "app", button: "Open Sky’s app password page", href: "https://www.sky.com/sky-yahoo-mail/manage-apps",
+        why: "Sky Mail is run by Yahoo, which doesn’t let other apps use your main password.",
+        steps: [
+          "Open Sky’s app password page with the button below and sign in with your Sky ID.",
+          "Generate an app password, name it “AO Intelligence”, and copy the 16-character code.",
+          "Paste your Sky address (name@sky.com) and that password below."
+        ] } },
     { id: "virgin", name: "Virgin Media", host: "imap.virginmedia.com",
-      steps: [
-        { t: "Use your full Virgin Media email address and your Virgin Media email password.", href: "https://www.virginmedia.com/help/email", link: "Virgin Media email help" },
-        { t: "Paste them below. If it’s refused, reset the email password in your Virgin Media account and try again." } ] },
+      pass: { kind: "normal", button: "Open Virgin Media email help", href: "https://www.virginmedia.com/help/email",
+        intro: "Virgin Media doesn’t use app passwords. Enter the same password you use for your Virgin Media email.",
+        steps: [
+          "Use your full Virgin Media email address and your Virgin Media email password.",
+          "Paste them below. If it’s refused, reset the email password in your Virgin Media account and try again."
+        ] } },
     { id: "imap", name: "Another provider", host: "", other: true,
-      steps: [
-        { t: "Type your email address and press “Find my settings” — we’ll look up your provider’s mail server." },
-        { t: "If your provider offers “app passwords”, create one called “AO Intelligence” and use it. Otherwise use your normal password." },
-        { t: "If we can’t find the server, type it in (it looks like imap.example.com — your provider’s help page lists it). We use the secure port 993." } ] },
+      pass: { kind: "either", button: "", href: "",
+        steps: [
+          "Type your email address and press “Find my settings” — we’ll look up your provider’s mail server.",
+          "If your provider offers app passwords, create one called “AO Intelligence” and use it. Otherwise use your normal email password.",
+          "If we can’t find the server, type it in (it looks like imap.example.com — your provider’s help page lists it). We use the secure port 993."
+        ] } },
   ];
   var CAL = [
     { id: "google-calendar", name: "Google Calendar", oauth: "google", kind: "ics",
@@ -298,19 +336,35 @@
         { t: "Open Outlook calendar settings → Shared calendars → “Publish a calendar”.", href: "https://outlook.live.com/calendar/0/options/calendar/SharedCalendars", link: "Open Outlook.com settings" },
         { t: "Pick your calendar, choose “Can view all details”, and press Publish." },
         { t: "Copy the ICS link (not the HTML one) and paste it below. For a work account use outlook.office.com instead — your administrator may have turned publishing off." } ] },
-    { id: "icloud-calendar", name: "iCloud Calendar and Mail", kind: "caldav", host: "imap.mail.me.com", mail: "icloud-mail", both: true, url: "https://caldav.icloud.com/",
-      steps: [
-        { t: "Sign in to your Apple Account and open Sign-In and Security → App-Specific Passwords.", href: APPLE, link: "Open Apple Account" },
-        { t: "Press “+”, name it “AO Intelligence” and copy the password (abcd-efgh-ijkl-mnop)." },
-        { t: "Enter your iCloud address and that password. One form connects your calendar and your mail." } ] },
+    { id: "icloud-calendar", name: "iCloud Calendar", kind: "caldav", url: "https://caldav.icloud.com/",
+      pass: { kind: "app", button: "Open Apple’s app password page", href: APPLE,
+        why: "Apple doesn’t let other apps use your main Apple Account password.",
+        extra: "Use the email address of your Apple Account — it can be different from the address you use for iCloud Mail. The same app-specific password can be reused. You can connect this calendar even if your email comes from a different provider.",
+        steps: [
+          "Open your Apple Account with the button below and sign in.",
+          "Go to Sign-In and Security, then App-Specific Passwords.",
+          "Press “+”, name it “AO Intelligence”, and copy the password (it looks like abcd-efgh-ijkl-mnop). If you already made one for iCloud Mail, you can reuse it.",
+          "Enter your Apple Account email and that password below."
+        ] } },
     { id: "yahoo-calendar", name: "Yahoo Calendar", kind: "caldav", url: "https://caldav.calendar.yahoo.com/",
-      steps: [
-        { t: "Open Yahoo Account security and choose “Generate app password”.", href: "https://login.yahoo.com/account/security", link: "Open Yahoo security" },
-        { t: "Enter your Yahoo address and that password below." } ] },
+      pass: { kind: "app", button: "Open Yahoo’s app password page", href: "https://login.yahoo.com/myaccount/security",
+        why: "Yahoo doesn’t let other apps use your main password.",
+        extra: "You can connect this calendar on its own, even if your email comes from a different provider. If you already made an app password for Yahoo Mail, you can reuse it here.",
+        steps: [
+          "Open Yahoo Account Security with the button below and sign in.",
+          "Choose “Generate app password”, name it “AO Intelligence”, and copy it.",
+          "Enter your Yahoo address and that password below."
+        ] } },
     { id: "fastmail-calendar", name: "Fastmail Calendar", kind: "caldav", url: "https://caldav.fastmail.com/dav/",
-      steps: [
-        { t: "In Fastmail go to Settings → Privacy & Security → Integrations → New app password, with Calendars (CalDAV) access.", href: "https://app.fastmail.com/settings/security/integrations", link: "Open Fastmail" },
-        { t: "Enter your Fastmail address and that password below." } ] },
+      pass: { kind: "app", button: "Open Fastmail’s app password page", href: "https://app.fastmail.com/settings/security/apps",
+        why: "Fastmail doesn’t let other apps use your main password.",
+        extra: "You can connect this calendar on its own, even if your email comes from a different provider. Give the app password Calendars (CalDAV) access. If you already made one for mail that includes calendars, you can reuse it.",
+        steps: [
+          "Open Fastmail with the button below and sign in.",
+          "Go to Settings, then Privacy & Security, then Manage app passwords.",
+          "Create a new app password with Calendars (CalDAV) access, name it “AO Intelligence”, and copy it.",
+          "Enter your Fastmail address and that password below."
+        ] } },
     { id: "zoho-calendar", name: "Zoho Calendar", kind: "ics",
       steps: [
         { t: "In Zoho Calendar, open the calendar’s Share options and copy its private iCal (.ics) link.", href: "https://calendar.zoho.com", link: "Open Zoho Calendar" },
@@ -318,7 +372,13 @@
     { id: "ics", name: "Any calendar link (.ics or webcal)", kind: "ics",
       steps: [ { t: "Most calendars (GMX, BT, Sky, Virgin Media, Nextcloud, …) can publish a private link ending .ics, sometimes called “iCal”, “subscribe” or “webcal”. Copy it and paste it below." } ] },
     { id: "caldav", name: "Any CalDAV calendar", kind: "caldav", url: "",
-      steps: [ { t: "Enter your calendar server’s CalDAV address, your username and an app password. Examples: iCloud https://caldav.icloud.com · Fastmail https://caldav.fastmail.com/dav/ · Yahoo https://caldav.calendar.yahoo.com/" } ] },
+      pass: { kind: "app", button: "", href: "",
+        extra: "Enter your calendar server’s address, your username and an app password (or your normal password if the server doesn’t use app passwords).",
+        steps: [
+          "Find your provider’s CalDAV address (examples: iCloud https://caldav.icloud.com · Fastmail https://caldav.fastmail.com/dav/ · Yahoo https://caldav.calendar.yahoo.com/).",
+          "If your provider offers app passwords, create one and use it. Otherwise use your normal password.",
+          "Enter the server, your username and the password below."
+        ] } },
   ];
   /** Best-guess IMAP server from an address, for instant pre-fill (the AO service does a fuller lookup). */
   function guessHost(address) {

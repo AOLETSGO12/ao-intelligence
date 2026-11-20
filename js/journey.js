@@ -392,6 +392,29 @@
       return h("li", null, st.t, st.href ? [" ", h("a", { href: st.href, target: "_blank", rel: "noopener noreferrer", class: "j-extlink" }, (st.link || "Open") + " ↗")] : null);
     }));
   }
+  function normEmail(v) { return String(v || "").trim().toLowerCase(); }
+  function normPass(v) { return String(v || "").replace(/\s+/g, ""); }
+  /** A short, plain-English box: what an app password is, why it's needed, exact steps, and a big deep-link button. */
+  function passwordBox(g) {
+    var p = g && g.pass;
+    if (!p) return guideSteps(g);
+    var box = h("div", { class: "j-passbox", role: "region", "aria-label": "How to get a password" });
+    if (p.kind === "normal") {
+      box.appendChild(h("h3", { class: "j-passbox-title" }, "Use your normal email password"));
+      box.appendChild(h("p", null, p.intro || (g.name + " doesn’t use app passwords.")));
+    } else if (p.kind === "either") {
+      box.appendChild(h("h3", { class: "j-passbox-title" }, "An app password, or your normal password"));
+      box.appendChild(h("p", null, "An app password is a separate password just for this app, so your real password stays private. You can delete it any time. Use one if your provider offers it — otherwise your normal email password is fine."));
+    } else {
+      box.appendChild(h("h3", { class: "j-passbox-title" }, "What is an app password?"));
+      box.appendChild(h("p", null, "It’s a separate password, just for this app, so your real password stays private. You can delete it any time. " + (p.why || "Your provider doesn’t let other apps use your main password.")));
+    }
+    if (p.steps && p.steps.length) box.appendChild(h("ol", { class: "j-steps" }, p.steps.map(function (st) { return h("li", null, st); })));
+    if (p.href && p.button) box.appendChild(h("a", { class: "btn btn-primary j-wide j-extbtn", href: p.href, target: "_blank", rel: "noopener noreferrer" }, p.button + " ↗"));
+    if (p.kind !== "normal") box.appendChild(h("p", { class: "j-passtip" }, "Copy and paste it here, spaces don’t matter."));
+    if (p.extra) box.appendChild(h("p", { class: "j-hint" }, p.extra));
+    return box;
+  }
   function textInput(id, label, key, opts) {
     opts = opts || {};
     var inp = h("input", { id: id, type: opts.type || "text", placeholder: opts.placeholder || "", value: rui.vals[key] != null ? rui.vals[key] : (opts.value || ""), autocomplete: opts.type === "password" ? "new-password" : (opts.autocomplete || "off"), autocapitalize: "none", autocorrect: "off", spellcheck: "false", inputmode: opts.inputmode || null });
@@ -465,9 +488,9 @@
   }
 
   // ---------------------------------------------------------------- mail and calendar
-  var SWITCHING_ON = "Sign-in is being switched on, check back soon.";
-  var MS_SOON = "Sign-in with Microsoft is coming very soon.";
-  var ICLOUD_CAL = "https://caldav.icloud.com/";
+  var SWITCHING_ON = "Sign-in isn’t switched on for this site yet. You can connect with an app password below.";
+  var SWITCHING_ON_CAL = "Sign-in isn’t switched on for this site yet. You can connect with a calendar link below.";
+  var MS_MAIL = "Connect your Outlook calendar now with a link. Outlook email connects with Microsoft sign-in once it’s switched on for your account.";
   function hostFor(g, addr, typed) {
     typed = String(typed || "").trim();
     if (typed && typed !== g.host) return typed;
@@ -487,27 +510,28 @@
       h("li", null, "That’s it — " + (rt === "google" ? "Gmail and Google Calendar are both connected in one go." : "Outlook mail and calendar are both connected in one go."))));
     panel.appendChild(h("p", { class: "j-hint" }, "We ask only to " + what + " We can’t send mail, and you can disconnect any time."));
     if (provider.note && itemKey === "mail" && rt === "microsoft") panel.appendChild(h("div", { class: "j-notice", role: "note" }, provider.note));
-    var soonMsg = rt === "google" ? SWITCHING_ON : MS_SOON;
-    if (!ready) panel.appendChild(h("div", { class: "j-notice", role: "note" }, h("strong", null, rt === "google" ? "Almost ready. " : "Coming very soon. "), soonMsg));
+    var waitMsg = rt === "microsoft" ? MS_MAIL : (itemKey === "calendar" ? SWITCHING_ON_CAL : SWITCHING_ON);
+    if (!ready) panel.appendChild(h("div", { class: "j-notice", role: "note" }, waitMsg));
     panel.appendChild(errBox());
     var label = itemKey === "mail" ? (rt === "google" ? "Connect Gmail" : "Connect Outlook") : (rt === "google" ? "Connect Google Calendar" : "Connect Outlook calendar");
     panel.appendChild(actionButton(label, function () {
-      if (!ready) return Promise.reject(new Error(soonMsg));
+      if (!ready) return Promise.reject(new Error(waitMsg));
       return L.connect(itemKey, provider.id, provider.name, rt, {}, state.connected);
     }));
     children.push(panel);
     return ready;
   }
 
-  /** Address + app password (or password) over IMAP. iCloud (g.both) also connects the calendar from the same form. */
+  /** Address + app password (or password) over IMAP. Mail only — calendars have their own step. */
   function imapPanel(g, children, opts) {
     opts = opts || {};
     var panel = opts.nested ? h("div", { class: "j-panel j-nested", id: "real-fallback" }) : h("div", { class: "j-panel", id: "real-panel" });
     panel.appendChild(h("h2", { class: opts.nested ? "j-sub j-sub-small" : "j-sub" }, opts.nested ? "Or connect with an app password" : g.name));
-    panel.appendChild(guideSteps(g));
+    var box = passwordBox(g); if (box) panel.appendChild(box);
     if (g.note && !opts.nested) panel.appendChild(h("p", { class: "j-hint" }, g.note));
+    var normal = g.pass && g.pass.kind === "normal";
     panel.appendChild(textInput("real-addr", "Your email address", "address", { type: "email", inputmode: "email", autocomplete: "email", placeholder: "you@example.com", value: rui.vals.address || (state.account ? state.account.email : "") }));
-    panel.appendChild(textInput("real-pass", g.other ? "Password or app password" : (g.id === "bt" || g.id === "virgin" ? "Email password" : "App password"), "password", { type: "password", placeholder: g.id === "gmail" ? "16-letter code" : g.id === "icloud-mail" ? "abcd-efgh-ijkl-mnop" : "", hint: "Sent over an encrypted connection, sealed, and kept only in this browser." }));
+    panel.appendChild(textInput("real-pass", g.other ? "Password or app password" : (normal ? "Email password" : "App password"), "password", { type: "password", placeholder: g.id === "gmail" ? "16-letter code" : (g.id === "icloud-mail" ? "abcd-efgh-ijkl-mnop" : ""), hint: "Sent over an encrypted connection, sealed, and kept only in this browser." }));
     var host = textInput("real-host", "Mail server (IMAP)", "host", { value: rui.vals.host != null ? rui.vals.host : g.host, placeholder: "imap.example.com", hint: "Port 993 (SSL). " + (g.other ? "We can look it up for you, or type it in." : "Already filled in — only change it if your provider says otherwise.") });
     if (g.other) {
       panel.appendChild(host);
@@ -517,7 +541,7 @@
         showError("");
         var gh = R.guessHost(a);
         var done = function (hst, kind) {
-          if (kind === "microsoft") { showError("That looks like an Outlook / Microsoft mailbox. Choose “Outlook, Hotmail or Microsoft 365” above — Microsoft doesn’t allow passwords."); return; }
+          if (kind === "microsoft") { showError("That looks like an Outlook / Microsoft mailbox. Choose “Outlook, Hotmail or Microsoft 365” above — Microsoft doesn’t allow passwords. You can still connect the Outlook calendar with a published link."); return; }
           if (kind === "proton") { showError("Proton Mail only allows other apps in through Proton Bridge on your own computer, so it can’t be connected here."); return; }
           if (hst) { rui.vals.host = hst; rui.hostNote = "Found: " + hst; } else rui.hostNote = "We couldn’t find it automatically — please type your provider’s mail server above.";
           render();
@@ -528,23 +552,18 @@
       if (rui.hostNote) panel.appendChild(h("p", { class: "j-hint", role: "status" }, rui.hostNote));
     } else panel.appendChild(h("details", { class: "j-details" }, h("summary", null, "Server settings"), host));
     panel.appendChild(errBox());
-    var label = g.both ? "Connect iCloud mail and calendar" : "Connect " + (g.other ? "my email" : g.name);
+    var label = "Connect " + (g.other ? "my email" : g.name);
     panel.appendChild(actionButton(label, function () {
-      var v = rui.vals, addr = String(v.address || "").trim(), pw = String(v.password || "");
+      var v = rui.vals, addr = normEmail(v.address), pw = normal ? String(v.password || "") : normPass(v.password);
       if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(addr)) return Promise.reject(new Error("Please enter your email address."));
-      if (!pw.trim()) return Promise.reject(new Error("Please paste the " + (g.id === "bt" || g.id === "virgin" ? "email password." : "app password (see the steps above).")));
-      if (g.id === "gmail" || g.id === "icloud-mail" || g.id === "yahoo" || g.id === "sky") pw = pw.replace(/\s+/g, "");
+      if (!String(v.password || "").trim()) return Promise.reject(new Error("Please paste the " + (normal ? "email password." : "app password (see the steps above).")));
       var hostV = hostFor(g, addr, v.host);
       var go = hostV ? Promise.resolve(hostV) : (L && L.detectImap ? L.detectImap(addr).then(function (r) { return r.host || ""; }, function () { return ""; }) : Promise.resolve(""));
       return go.then(function (hh) {
         if (!hh) throw new Error("Please enter your mail server, for example imap.example.com (or press “Find my settings”).");
         return needBackend("Email can’t be read directly from a web page, so it has to go through the AO service.").then(function () {
-          var name = g.other ? "Email (" + addr.split("@")[1] + ")" : g.name.replace(/ and Calendar$/, "").replace(/ Mail and Calendar$/, " Mail");
-          return L.connect("mail", g.id, name, "imap", { address: addr, password: pw, host: hh }, state.connected).then(function (mailConn) {
-            if (!g.both) return mailConn;
-            return L.connect("calendar", "icloud-calendar", "iCloud Calendar", "caldav", { url: ICLOUD_CAL, username: addr, password: pw }, state.connected).then(function (calConn) { mailConn.also = [calConn]; return mailConn; },
-              function (e) { rui.notice = "Your mail is connected, but the calendar wasn’t: " + ((e && e.message) || "it didn’t work") + " You can add it again from the calendar step."; return mailConn; });
-          });
+          var name = g.other ? "Email (" + addr.split("@")[1] + ")" : g.name;
+          return L.connect("mail", g.id, name, "imap", { address: addr, password: pw, host: hh }, state.connected);
         });
       });
     }));
@@ -568,28 +587,25 @@
     children.push(panel);
   }
 
-  /** CalDAV with username + app password (iCloud, Yahoo, Fastmail, or any server). iCloud also connects mail. */
+  /** CalDAV with username + app password. Independent of mail — iCloud, Yahoo, Fastmail, or any server. */
   function caldavPanel(g, children) {
     var panel = h("div", { class: "j-panel", id: "real-panel" });
     panel.appendChild(h("h2", { class: "j-sub" }, g.name));
-    panel.appendChild(guideSteps(g));
+    var box = passwordBox(g); if (box) panel.appendChild(box);
     var manual = !g.url;
+    var isApple = g.id === "icloud-calendar";
     if (manual) panel.appendChild(textInput("real-url", "CalDAV server address", "url", { placeholder: "https://caldav.example.com/" }));
-    panel.appendChild(textInput("real-user", g.both ? "Your iCloud email address" : "Username (usually your email address)", "username", { autocomplete: "username", value: rui.vals.username || rui.vals.address || (state.account ? state.account.email : "") }));
-    panel.appendChild(textInput("real-cpass", "App password", "password", { type: "password", placeholder: g.both ? "abcd-efgh-ijkl-mnop" : "", hint: "Sent over an encrypted connection, sealed, and kept only in this browser." }));
+    panel.appendChild(textInput("real-user", isApple ? "Apple Account email" : "Username (usually your email address)", "username", { type: "email", inputmode: "email", autocomplete: "username", placeholder: isApple ? "you@icloud.com" : "", value: rui.vals.username || "" }));
+    panel.appendChild(textInput("real-cpass", "App password", "password", { type: "password", placeholder: isApple ? "abcd-efgh-ijkl-mnop" : "", hint: "Sent over an encrypted connection, sealed, and kept only in this browser." }));
     if (!manual) panel.appendChild(h("details", { class: "j-details" }, h("summary", null, "Server settings"), textInput("real-url", "CalDAV server address", "url", { value: rui.vals.url != null ? rui.vals.url : g.url })));
     panel.appendChild(errBox());
-    panel.appendChild(actionButton(g.both ? "Connect iCloud calendar and mail" : "Connect " + g.name, function () {
-      var v = rui.vals, user = String(v.username || "").trim(), pw = String(v.password || "").replace(g.both ? /\s+/g : /^$/, ""), url = String(v.url != null ? v.url : g.url || "").trim();
+    panel.appendChild(actionButton("Connect " + g.name, function () {
+      var v = rui.vals, user = normEmail(v.username), pw = normPass(v.password), url = String(v.url != null ? v.url : g.url || "").trim();
       if (!url) return Promise.reject(new Error("Please enter the CalDAV server address."));
-      if (!user) return Promise.reject(new Error("Please enter your username."));
-      if (!pw) return Promise.reject(new Error("Please paste the app password (see the steps above)."));
+      if (!user) return Promise.reject(new Error(isApple ? "Please enter your Apple Account email." : "Please enter your username."));
+      if (!String(v.password || "").trim()) return Promise.reject(new Error("Please paste the app password (see the steps above)."));
       return needBackend("Calendars are read through the AO service.").then(function () {
-        return L.connect("calendar", g.id, g.name.replace(/ and Mail$/, ""), "caldav", { url: url, username: user, password: pw }, state.connected).then(function (calConn) {
-          if (!g.both || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(user)) return calConn;
-          return L.connect("mail", "icloud-mail", "iCloud Mail", "imap", { address: user, password: pw, host: "imap.mail.me.com" }, state.connected).then(function (m) { calConn.also = [m]; return calConn; },
-            function (e) { rui.notice = "Your calendar is connected, but the mail wasn’t: " + ((e && e.message) || "it didn’t work") + " You can add it again from the email step."; return calConn; });
-        });
+        return L.connect("calendar", g.id, g.name, "caldav", { url: url, username: user, password: pw }, state.connected);
       });
     }));
     children.push(panel);
