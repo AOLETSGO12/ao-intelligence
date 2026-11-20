@@ -153,7 +153,9 @@ async function run(engineName, engine, label, ctxOpts) {
   await tap(btn('Go to my dashboard')); await p.waitForTimeout(1500);
   await p.waitForURL(/app\.html/, { timeout: 8000 }).catch(() => {}); await p.waitForTimeout(1200);
   t = await txt(); ok(/Add your first|Connect your calendar|nothing|No /i.test(t) || CONFIGURED, 'Today starts honest and empty');
-  ok(!/Sample data|sample data|Demo/.test(t), 'no sample/demo wording on Today');
+  ok(/Today.s agenda|Daily overview|Recent activity/i.test(t), 'Today has agenda, overview and activity');
+  ok(!/Sample data|sample data|Demo|coming soon/i.test(t), 'no sample/demo wording on Today');
+  ok(!/Workers AI|Llama|OpenAI|ChatGPT|Grok/i.test(t), 'no model or provider names on Today');
   // tasks
   await p.fill('#new-task', 'Email the sponsor deck'); await tap(btn('Add'));
   t = await txt(); ok(/Email the sponsor deck/.test(t), 'user task added');
@@ -176,6 +178,7 @@ async function run(engineName, engine, label, ctxOpts) {
   // places
   await tap(p.locator('#app-settings'));
   t = await txt(); ok(/Places/.test(t) && /Sign out of this device/.test(t) && /Delete this dashboard/.test(t), 'Settings has places, delete and sign out');
+  ok(/Daily overview time/.test(t) && /Show alerts for messages that need a reply/.test(t), 'Settings has overview time and alerts');
   await tap(btn('Add a place'));
   await p.fill('#place-name', 'Workshop'); await p.fill('#place-addr', 'Unit 4, Silverstone');
   await tap(btn('Save place'));

@@ -163,8 +163,8 @@ function decodeBody(bytesStr, cte, charset) {
 }
 const stripHtml = (s) => s.replace(/<(style|script)[\s\S]*?<\/\1>/gi, " ").replace(/<[^>]+>/g, " ").replace(/&nbsp;/g, " ").replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&#39;|&apos;/g, "'").replace(/&quot;/g, '"');
 
-/** Plain-text snippet from the start of a message body (handles simple multipart, base64, quoted-printable). */
-export function snippetFromBody(headers, bodyBytes) {
+/** Plain text from the start of a message body (handles simple multipart, base64, quoted-printable). */
+export function extractBody(headers, bodyBytes) {
   const raw = td1.decode(bodyBytes);
   const ct = headers["content-type"] || "text/plain";
   const boundary = (ct.match(/boundary="?([^";]+)"?/i) || [])[1];
@@ -187,8 +187,16 @@ export function snippetFromBody(headers, bodyBytes) {
     const body = decodeBody(raw, headers["content-transfer-encoding"], (ct.match(/charset="?([^";]+)/i) || [])[1]);
     text = /text\/html/i.test(ct) ? stripHtml(body) : body;
   }
-  text = text.split(/\r?\n/).filter((l) => !/^\s*>/.test(l)).join(" ").replace(/\s+/g, " ").trim();
+  text = text.split(/\r?\n/).filter((l) => !/^\s*>/.test(l) && !/^\s*On .+wrote:\s*$/i.test(l)).join("\n").replace(/[ \t]+/g, " ").replace(/\n{3,}/g, "\n\n").trim();
+  return text;
+}
+export function snippetFromBody(headers, bodyBytes) {
+  const text = extractBody(headers, bodyBytes).replace(/\s+/g, " ").trim();
   return text.length > 240 ? text.slice(0, 237) + "…" : text;
+}
+export function plainBody(headers, bodyBytes, max = 1200) {
+  const text = extractBody(headers, bodyBytes);
+  return text.length > max ? text.slice(0, max - 1) + "…" : text;
 }
 
 const AUTO = /(^|[^a-z])(no-?reply|do-?not-?reply|donotreply|mailer-daemon|notifications?|newsletter|updates?|alerts?|billing|receipts?|bounce)([^a-z]|$)/i;
@@ -209,12 +217,18 @@ export function mapMessage(entry, selfAddress, tz) {
   const prec = (headers.precedence || "").toLowerCase();
   const auto = !!headers["list-unsubscribe"] || /bulk|list|junk/.test(prec) || (headers["auto-submitted"] && !/^no$/i.test(headers["auto-submitted"])) || AUTO.test(from.address) || AUTO.test(from.name);
   const mine = selfAddress && from.address.toLowerCase() === selfAddress.toLowerCase();
+  const bodyText = plainBody(headers, body, 1200);
+  const mid = (headers["message-id"] || "").trim();
+  const irt = (headers["in-reply-to"] || "").trim();
+  const refs = (headers.references || "").trim();
   return {
     uid, t, auto: !!auto, mine: !!mine, answered: /\\Answered/i.test(flags),
+    mid, irt, refs, subject: (headers.subject || "").trim(),
     email: {
       id: "i:" + uid, from: from.name, org: orgFromDomain(from.domain) || from.domain, subject: (headers.subject || "(no subject)").trim(),
-      snippet: snippetFromBody(headers, body), when: w.date + " " + w.time, when_iso: new Date(t).toISOString(), live: true,
-      meta: { provider: "imap", messageId: uid, address: parseAddress(headers["reply-to"] || headers.from).address, subject: (headers.subject || "").trim(), rfcId: headers["message-id"], refs: headers.references },
+      snippet: snippetFromBody(headers, body), body: bodyText, when: w.date + " " + w.time, when_iso: new Date(t).toISOString(), live: true,
+      meta: { provider: "imap", messageId: uid, address: parseAddress(headers["reply-to"] || headers.from).address, subject: (headers.subject || "").trim(), rfcId: mid, refs: refs, inReplyTo: irt },
+      headers: { "list-unsubscribe": headers["list-unsubscribe"] || "", "auto-submitted": headers["auto-submitted"] || "", precedence: headers.precedence || "" },
     },
   };
 }
@@ -231,11 +245,46 @@ export async function listNeedingReply(client, { selfAddress, days = 14, tz = "E
   const line = r.untagged.map((e) => e.parts[0]).find((p) => typeof p === "string" && /^\* SEARCH/i.test(p)) || "* SEARCH";
   const uids = line.replace(/^\* SEARCH\s*/i, "").split(/\s+/).filter(Boolean).map(Number).filter((n) => n > 0).sort((a, b) => a - b).slice(-40);
   if (!uids.length) return { emails: [], other: 0 };
-  r = await client.command(`UID FETCH ${uids.join(",")} (UID FLAGS INTERNALDATE BODY.PEEK[HEADER.FIELDS (FROM REPLY-TO SUBJECT DATE MESSAGE-ID REFERENCES LIST-UNSUBSCRIBE AUTO-SUBMITTED PRECEDENCE CONTENT-TYPE CONTENT-TRANSFER-ENCODING)] BODY.PEEK[TEXT]<0.2500>)`);
+  r = await client.command(`UID FETCH ${uids.join(",")} (UID FLAGS INTERNALDATE BODY.PEEK[HEADER.FIELDS (FROM REPLY-TO SUBJECT DATE MESSAGE-ID IN-REPLY-TO REFERENCES LIST-UNSUBSCRIBE AUTO-SUBMITTED PRECEDENCE CONTENT-TYPE CONTENT-TRANSFER-ENCODING)] BODY.PEEK[TEXT]<0.2500>)`);
   if (r.status !== "OK") throw new HttpError(502, "We couldn’t read the messages.");
   const msgs = r.untagged.map((e) => mapMessage(e, selfAddress, tz)).filter(Boolean).sort((a, b) => b.t - a.t);
   const keep = msgs.filter((m) => !m.auto && !m.mine && !m.answered).slice(0, limit);
-  return { emails: keep.map((m) => m.email), other: Math.max(0, msgs.length - keep.length) };
+  const stripSub = (s) => String(s || "").replace(/^(re|fwd?):\s*/ig, "").trim().toLowerCase();
+  const allIds = new Map();
+  msgs.forEach((m) => { if (m.mid) allIds.set(m.mid, m); });
+  function threadFor(m) {
+    const out = [];
+    const seen = new Set();
+    let cur = m;
+    for (let i = 0; i < 6 && cur; i++) {
+      if (seen.has(cur.uid)) break;
+      seen.add(cur.uid);
+      out.push(cur);
+      const want = (cur.irt || "").split(/\s+/).filter(Boolean)[0] || "";
+      cur = want && allIds.get(want) ? allIds.get(want) : null;
+    }
+    if (out.length < 2) {
+      const sub = stripSub(m.subject);
+      if (sub) {
+        msgs.filter((x) => x !== m && stripSub(x.subject) === sub && Math.abs(x.t - m.t) < 14 * 86400000)
+          .sort((a, b) => a.t - b.t).slice(-3).forEach((x) => { if (!seen.has(x.uid)) { seen.add(x.uid); out.push(x); } });
+      }
+    }
+    out.sort((a, b) => a.t - b.t);
+    const latest = out.filter((x) => x === m);
+    const prior = out.filter((x) => x !== m).slice(-3);
+    return prior.concat(latest).map((x) => ({ from: x.email.from, date: x.email.when, text: x.email.body || x.email.snippet || "" }));
+  }
+  const emails = keep.map((m) => {
+    const e = m.email;
+    e.thread = threadFor(m);
+    return e;
+  });
+  const filed = msgs.filter((m) => m.auto && !m.mine).slice(0, 15).map((m) => {
+    const e = Object.assign({}, m.email, { thread: threadFor(m), noReply: true, noReplyReason: "No reply needed" });
+    return e;
+  });
+  return { emails, filed, other: Math.max(0, msgs.length - keep.length) };
 }
 
 // ---------------------------------------------------------------- drafts (APPEND to the Drafts folder; nothing is sent)

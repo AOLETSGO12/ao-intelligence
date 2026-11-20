@@ -53,6 +53,11 @@ var AOEngine = (() => {
     shortDate: () => shortDate,
     startConnection: () => startConnection,
     templateDrafts: () => templateDrafts,
+    classifyNoReply: () => classifyNoReply,
+    classifyEmail: () => classifyEmail,
+    buildAgenda: () => buildAgenda,
+    buildForward: () => buildForward,
+    logActivity: () => logActivity,
     time12: () => time12,
     todayIso: () => todayIso,
     universeOf: () => universeOf,
@@ -809,7 +814,7 @@ var AOEngine = (() => {
 
   // ../ao-intelligence-app/snack-sdk54/src/engine/model.ts
   function newState() {
-    return { v: 1, step: "welcome", cursor: 0, selected: ["bank"], connected: {}, skipped: [], requests: {}, doneTasks: [], replied: [], edits: {}, userTasks: [], userTargets: [], places: [], eventPlaces: {} };
+    return { v: 1, step: "welcome", cursor: 0, selected: ["bank"], connected: {}, skipped: [], requests: {}, doneTasks: [], replied: [], edits: {}, userTasks: [], userTargets: [], places: [], eventPlaces: {}, activityLog: [], dismissedActions: [], actionEdits: {}, dailyOverview: null, overviewPrefs: { time: "07:00", showReply: true, showInvoices: true, showBookings: true, showNewsletters: true } };
   }
   function parseState(raw) {
     if (!raw) return newState();
@@ -863,6 +868,7 @@ var AOEngine = (() => {
       u.bank = [];
       u.invoices = [];
       u.emails = [];
+      u.filed = [];
       u.events = [];
       u.otherMessages = 0;
       u.monthTarget = s.moneyGoal || 0;
@@ -872,6 +878,7 @@ var AOEngine = (() => {
     if (real) u.real = true;
     if (flags.mail) {
       u.emails = L.mail || [];
+      u.filed = L.filed || [];
       u.otherMessages = L.otherMessages || 0;
     }
     if (flags.calendar) u.events = L.calendar || [];
@@ -887,15 +894,75 @@ var AOEngine = (() => {
     else if (flags.bank) u.monthTarget = roundUpTarget(sumIn);
     return u;
   }
-  function templateDrafts(m, owner, business) {
-    const first = (m.from || "").replace(/<.*$/, "").trim().split(/\s+/)[0] || "there";
-    const me = (owner || "").trim().split(/\s+/)[0] || "";
-    const sign = "Kind regards,\n" + (owner || business || "");
-    const q = /\?|can you|could you|would you|please|let me know|availab|quote|price|how much/i.test(m.subject + " " + m.snippet);
-    return [
-      { label: "Quick reply", body: "Hi " + first + ",\n\nThanks for your message" + (m.subject ? " about \u201C" + m.subject.replace(/^(re|fwd?):\s*/i, "") + "\u201D" : "") + ". " + (q ? "I\u2019ve seen your question and will come back to you with a proper answer shortly." : "I\u2019ve got it and will get back to you shortly.") + "\n\n" + sign },
-      { label: "Ask for details", body: "Hi " + first + ",\n\nThanks for getting in touch. To make sure I give you the right answer, could you send over a little more detail \u2014 what you need, by when, and anything else that would help?\n\nOnce I have that I\u2019ll reply properly" + (me ? "" : "") + ".\n\n" + sign }
-    ];
+  function titleCaseName(w) { return w ? w.charAt(0).toUpperCase() + w.slice(1) : ""; }
+  function firstNameOf(s, fallback) {
+    const parts = String(s || "").replace(/<.*$/, "").replace(/["']/g, "").trim().split(/\s+/).filter(Boolean);
+    if (!parts.length) return fallback || "";
+    if (/^(mr|mrs|ms|miss|dr|prof|sir|dame)$/i.test(parts[0]) && parts[1]) return titleCaseName(parts[0]) + " " + titleCaseName(parts[1]);
+    const n = parts[0];
+    if (/^(hi|hello|there|team|info|mail|support|accounts|admin|noreply|no-reply|british|entries|orders|news|newsletter|championship)$/i.test(n)) return fallback || "";
+    return titleCaseName(n);
+  }
+  function classifyNoReply(m) {
+    const from = String((m && (m.from || "")) + " " + ((m.meta && m.meta.address) || m.address || ""));
+    const subj = String((m && m.subject) || "");
+    const body = String((m && (m.body || m.snippet)) || "");
+    const text = (subj + "\n" + body).toLowerCase();
+    const h = (m && m.headers) || {};
+    const needsHuman = /\b(we('ll| will)? (try (and|to) )?get that sorted|looking into (it|this)|leave (it|this) with (us|me))\b/i.test(text)
+      || /\?|\b(can you|could you|would you|please (confirm|advise|let me know)|let me know|how (much|many|soon)|when (can|will|are))\b/i.test(subj + " " + body)
+      || /\b(call|meet|meeting|catch[- ]up|are you free|book a (call|slot))\b/i.test(text)
+      || /\b(invoice|vat|payment due|please pay|bank details)\b/i.test(text);
+    if (h["list-unsubscribe"] && !needsHuman) return "newsletter";
+    if (h["auto-submitted"] && !/^no$/i.test(String(h["auto-submitted"])) && !needsHuman) return "notification";
+    if (/(^|[^a-z])(no-?reply|do-?not-?reply|donotreply|mailer-daemon|newsletter|notifications?|alerts?|bounce|postmaster)([^a-z]|$)/i.test(from)) return "no-reply";
+    if (/\b(newsletter|weekly round-?up|this week in)\b/i.test(subj) && !needsHuman) return "newsletter";
+    if (/\bunsubscribe\b/i.test(body) && /\b(view in (your )?browser|manage (your )?preferences|you('re| are) receiving this)\b/i.test(body) && !needsHuman) return "newsletter";
+    if (/\b(receipt|payment (received|confirmation)|your (payment|order) (was|has been|is)|order (confirmation|confirmed|received|has been (placed|received|dispatched|shipped))|despatch confirmation|shipping confirmation|thanks for (your )?order)\b/i.test(subj) && !needsHuman) return "receipt";
+    if (/\b(do not reply|this (mailbox|inbox) is not monitored|automatically generated)\b/i.test(text) && !needsHuman) return "notification";
+    return null;
+  }
+  function templateDrafts(m, owner, business, tone) {
+    tone = String(tone || "friendly").toLowerCase();
+    if (classifyNoReply(m)) return [];
+    const first = firstNameOf(m && m.from, "");
+    const me = firstNameOf(owner, "") || firstNameOf(business, "");
+    const hi = tone === "formal" ? (first ? "Dear " + first + "," : "Hello,") : (first ? "Hi " + first + "," : "Hi,");
+    const close = (tone === "formal" ? "Kind regards" : "Thanks") + (me ? ",\n" + me : "");
+    const subj = String((m && m.subject) || "").replace(/^(re|fwd?):\s*/i, "").trim();
+    const blob = subj + "\n" + String((m && (m.body || m.snippet)) || "") + "\n" + ((m && m.thread) || []).map((t) => (t && (t.text || t.body)) || "").join("\n");
+    let sentences;
+    if (/\b(we('ll| will)? (try (and|to) )?get that sorted|get (this|that|it) sorted|looking into (it|this)|we('re| are) looking into|i('ve| have) (passed|forwarded) this|we('ll| will) (look into|investigate|check (this|it) out)|leave (it|this) with (us|me)|we're on (it|this))\b/i.test(blob)) {
+      sentences = tone === "short"
+        ? ["Thanks for your help \u2014 please let me know when you\u2019ve found a solution."]
+        : ["Thanks for your help with this.", "Please let me know when you\u2019ve found a solution, or if you need anything else from me in the meantime."];
+    } else if (/\b(call|meet|meeting|catch[- ]up|zoom|teams|availability|are you free|pencil(led)? in|book a (call|slot)|can we speak|15 minutes|20 minutes|half an hour)\b/i.test(blob) && !/\b(invoice|vat|payment due)\b/i.test(blob)) {
+      sentences = tone === "short"
+        ? ["Yes, I\u2019m happy to speak \u2014 [[suggest a time that works for you]]."]
+        : ["Thanks for getting in touch, and yes, I\u2019m happy to speak.", "[[Suggest a couple of times that work for you, or ask them to propose one.]]"];
+    } else if (/\b(invoice|vat|payment due|overdue|please pay|bank details|purchase order)\b/i.test(blob) && /\b(please (find|see)|attached|here is|our invoice|invoice is due|outstanding)\b/i.test(blob)) {
+      sentences = ["Thanks, I\u2019ve received the invoice and will look it over.", "I\u2019ll follow up only if something doesn\u2019t match."];
+    } else if (/\b(invoice|vat|payment due|please pay|bank details)\b/i.test(blob) && /\b(please (send|raise|issue)|can you (send|invoice)|outstanding from us)\b/i.test(blob)) {
+      sentences = ["Thanks for the reminder.", "[[Add the invoice details, amount, or bank information, or say when you\u2019ll send it.]]"];
+    } else if (/\?|\b(can you|could you|would you|please (confirm|advise|let me know|send|share)|let me know|how (much|many|soon|long)|what('s| is) the|when (can|will|are)|is it possible)\b/i.test(blob)) {
+      sentences = tone === "short"
+        ? ["Thanks for the question \u2014 [[answer, or say what you need in order to answer]]."]
+        : ["Thanks for your email" + (subj ? " about \u201C" + subj.slice(0, 80) + "\u201D" : "") + ".", "[[Answer their question, or write a short note about what you need in order to answer it.]]"];
+    } else if (/\b(delay(ed)?|running late|postponed|pushed back|behind schedule)\b/i.test(blob) && !/\?/.test(blob)) {
+      sentences = tone === "short"
+        ? ["Thanks for the update \u2014 noted."]
+        : ["Thanks for the update, that\u2019s noted.", "Please send tracking or a further update when you have it."];
+    } else if (/\b(thank(s| you)|cheers|much appreciated)\b/i.test(blob) && blob.length < 400) {
+      sentences = ["You\u2019re welcome \u2014 glad that was useful.", "Do shout if you need anything else."];
+    } else {
+      const about = subj ? " about \u201C" + subj.slice(0, 80) + "\u201D" : "";
+      sentences = tone === "short"
+        ? ["Thanks for your email" + about + " \u2014 [[reply to the point they raised]]."]
+        : ["Thanks for your email" + about + ".", "[[Reply to what they actually asked or told you. Don\u2019t promise to get back later unless you genuinely need to check something.]]"];
+    }
+    if (tone === "formal" && sentences[0] && /^Thanks/.test(sentences[0])) sentences[0] = sentences[0].replace(/^Thanks/, "Thank you");
+    const label = tone === "short" ? "Short" : tone === "formal" ? "Formal" : "Draft";
+    return [{ label, body: hi + "\n\n" + sentences.join(" ") + "\n\n" + close }];
   }
   function wait(ms) {
     return new Promise((r) => setTimeout(r, ms));
@@ -1006,6 +1073,133 @@ var AOEngine = (() => {
     if (pct < -0.5) return { kind: "down", text: "Down " + Math.round(Math.abs(pct)) + "% vs yesterday" };
     return { kind: "flat", text: "Similar to yesterday" };
   }
+
+  function classifyEmail(m) {
+    if (classifyNoReply(m) === "receipt" || /\b(invoice|vat|payment due|overdue|please pay|payout|receipt)\b/i.test(String((m && m.subject) || "") + " " + String((m && (m.body || m.snippet)) || ""))) return "invoice";
+    const skip = classifyNoReply(m);
+    if (skip) return "newsletter";
+    if (/\b(appointment|booking|booked|reservation|site visit|school visit|are you free|availability|catch[- ]up|meeting request|can we (meet|speak|call)|test day|arrival time)\b/i.test(String((m && m.subject) || "") + " " + String((m && (m.body || m.snippet)) || ""))) return "booking";
+    return "reply";
+  }
+  function minutesOf(hhmm) {
+    const p = String(hhmm || "00:00").split(":");
+    return (parseInt(p[0], 10) || 0) * 60 + (parseInt(p[1], 10) || 0);
+  }
+  function fmtMins(n) {
+    if (n <= 0) return "now";
+    if (n < 60) return n + " min";
+    const h = Math.floor(n / 60), m = n % 60;
+    return m ? h + " hr " + m + " min" : h + (h === 1 ? " hour" : " hours");
+  }
+  function postcodeOut(s) {
+    const m = String(s || "").toUpperCase().match(/\b([A-Z]{1,2}\d[A-Z\d]?)\s*\d[A-Z]{2}\b/);
+    return m ? m[1] : "";
+  }
+  function placeOf(e, places, eventPlaces) {
+    const id = eventPlaces && e && e.id ? eventPlaces[e.id] : null;
+    const tagged = id && (places || []).filter((p) => p.id === id)[0];
+    const name = tagged ? tagged.name : (e && e.place) || "";
+    const address = tagged ? tagged.address || "" : "";
+    const query = address || name;
+    return { name, address, query, maps: query ? "https://www.google.com/maps/search/?api=1&query=" + encodeURIComponent(query) : "" };
+  }
+  function samePlace(a, b) {
+    if (!a || !b) return false;
+    if (a.name && b.name && a.name.trim().toLowerCase() === b.name.trim().toLowerCase()) return true;
+    const pa = postcodeOut(a.address), pb = postcodeOut(b.address);
+    return !!(pa && pb && pa === pb);
+  }
+  function travelHint(prev, curr) {
+    if (!prev || !curr || !prev.query || !curr.query || samePlace(prev, curr)) return null;
+    const pa = postcodeOut(prev.address), pb = postcodeOut(curr.address);
+    if (pa && pb && pa === pb) return "Short hop from " + prev.name + " to " + curr.name + " \u2014 allow about 15\u201320 minutes.";
+    return "Travel from " + (prev.name || "the last place") + " to " + (curr.name || "the next place") + " \u2014 allow around 45 minutes and check the route.";
+  }
+  function buildAgenda(events, nowHHMM, places, eventPlaces) {
+    const list = (events || []).slice().sort((a, b) => (a.start || "") < (b.start || "") ? -1 : 1);
+    const nowM = minutesOf(nowHHMM || "00:00");
+    let nextId = null, currentId = null;
+    list.forEach((e) => {
+      if (e.allDay) return;
+      const s = minutesOf(e.start), en = minutesOf(e.end || e.start);
+      if (s <= nowM && nowM < (en === s ? s + 30 : en)) currentId = currentId || e.id;
+      else if (s >= nowM && !nextId && !currentId) nextId = e.id;
+    });
+    const rows = [];
+    let prev = null;
+    list.forEach((e) => {
+      const pl = placeOf(e, places, eventPlaces);
+      if (prev && !prev.allDay && !e.allDay) {
+        const gap = minutesOf(e.start) - minutesOf(prev.end || prev.start);
+        if (gap >= 30) rows.push({ type: "gap", label: "Free gap \u2014 " + time12(prev.end || prev.start) + " to " + time12(e.start) + " (" + fmtMins(gap) + ")" });
+        const hint = travelHint(placeOf(prev, places, eventPlaces), pl);
+        if (hint) rows.push({ type: "travel", label: hint });
+      }
+      const isNext = e.id && e.id === (currentId || nextId);
+      let highlight = "";
+      if (isNext && currentId === e.id) highlight = "On now";
+      else if (isNext && nextId === e.id) {
+        const mins = minutesOf(e.start) - nowM;
+        highlight = "Next up in " + fmtMins(mins);
+      }
+      rows.push({ type: "event", event: e, place: pl, highlight, isNext });
+      prev = e;
+    });
+    return { rows, nextId: currentId || nextId };
+  }
+  function ageDays(e, today) {
+    if (e && e.when_iso) {
+      const d = new Date(e.when_iso);
+      if (!isNaN(d.getTime())) return Math.max(0, Math.floor((Date.parse(today + "T12:00:00") - d.getTime()) / 86400000));
+    }
+    const w = String((e && e.when) || "");
+    const m = w.match(/(\d+)\s+days? ago/i);
+    if (m) return +m[1];
+    if (/yesterday/i.test(w)) return 1;
+    return 0;
+  }
+  function sponsorLike(e) {
+    return /sponsor|partner|partnership|branding|livery|hospitality|backer|supported by/i.test([e.from, e.org, e.subject, e.snippet, e.body].join(" "));
+  }
+  function raceLike(e) {
+    return /test|race|qualif|round|grand prix|\bf4\b|championship|track day|scrutineer|grid|travel|flight|hotel|airport/i.test((e && e.title) || "");
+  }
+  function buildForward(u, s, today, flags, extras, moneyBits) {
+    if ((s.business && s.business.type) === "personal") return null;
+    const motor = /motor|racing|f4|athlete/i.test(((s.business && s.business.industry) || "") + " " + ((s.business && s.business.name) || ""));
+    const waiting = (u.emails || []).filter((e) => (s.replied || []).indexOf(e.id) === -1 && !e.noReply);
+    const pipeline = waiting.filter(sponsorLike).map((e) => {
+      const days = ageDays(e, today);
+      return { id: e.id, from: e.from, org: e.org, subject: e.subject, quiet: days >= 7, days };
+    });
+    const upcoming = (u.events || []).filter((e) => e.date >= today && (motor ? raceLike(e) || e.date === today : true)).slice(0, 6);
+    const money = { balance: null, trend: "", invoiceEmails: waiting.filter((e) => /invoice|payment due|overdue|please pay/i.test((e.subject || "") + " " + (e.snippet || ""))) };
+    if (extras && extras.bank && typeof extras.bank.balance === "number") money.balance = extras.bank.balance;
+    const bank = (u.bank || []);
+    if (bank.length) {
+      const prev = addDays(today, -14), mid = addDays(today, -7);
+      const sumIn = (from, to) => bank.filter((t) => t.direction === "in" && t.date >= from && t.date < to).reduce((a, t) => a + t.amount, 0);
+      const a = sumIn(mid, addDays(today, 1)), b = sumIn(prev, mid);
+      if (a || b) money.trend = a > b ? "Money in has been a little higher over the last week than the week before." : a < b ? "Money in has been a little quieter over the last week than the week before." : "Money in has been similar to the week before.";
+    }
+    if (moneyBits && moneyBits.invoices) money.invoices = moneyBits.invoices;
+    const recent = (u.events || []).filter((e) => e.date < today && e.date >= addDays(today, -5) && (motor ? raceLike(e) : true));
+    const content = [];
+    if (recent[0]) content.push({ id: "content:" + recent[0].id, title: "After \u201C" + recent[0].title + "\u201D", detail: motor ? "A short recap or photos for sponsors and socials, when you\u2019re ready." : "A short follow-up after this, when you\u2019re ready." });
+    else if (upcoming[0] && upcoming[0].date > today) content.push({ id: "content:" + upcoming[0].id, title: "After \u201C" + upcoming[0].title + "\u201D", detail: motor ? "Plan a post for after the event \u2014 don\u2019t invent a result now." : "A note or follow-up after this is in the diary." });
+    const labels = motor
+      ? { pipeline: "Sponsor and partner pipeline", events: "Upcoming tests, races and travel", money: "Money", content: "Content and social", goals: "Goals and targets" }
+      : { pipeline: "People waiting on you", events: "Coming up", money: "Money", content: "Follow-up", goals: "Goals and targets" };
+    const actions = ((s.dailyOverview && s.dailyOverview.date === today && s.dailyOverview.actions) || []).filter((a) => (s.dismissedActions || []).indexOf(a.id) === -1).map((a) => Object.assign({}, a, { title: (s.actionEdits && s.actionEdits[a.id]) || a.title }));
+    return { motor, pipeline, upcoming, money, content, labels, actions };
+  }
+  function logActivity(s, today, kind, title, detail) {
+    s.activityLog = s.activityLog || [];
+    s.activityLog = s.activityLog.filter((a) => !(a.kind === kind && a.date === today));
+    s.activityLog.unshift({ id: kind + ":" + today, date: today, at: (new Date()).toISOString(), kind, title, detail: detail || "" });
+    s.activityLog = s.activityLog.slice(0, 40);
+    return s.activityLog;
+  }
   function buildView(u, s, nowHHMM, liveData) {
     const c = s.connected;
     const salesKeys = Object.keys(c).filter((k) => k.indexOf("sales:") === 0);
@@ -1092,7 +1286,7 @@ var AOEngine = (() => {
     const activity = act.slice(0, 10).map((a) => ({ when: a.when, time: a.time, title: a.title, desc: a.desc, source: a.source, amount: a.amount, direction: a.direction }));
     const activityEmpty = !flags.any ? "Connect your bank or a sales tool to see recent activity here." : "";
     const unreplied = flags.mail ? u.emails.filter((e) => s.replied.indexOf(e.id) === -1) : [];
-    const emails = unreplied.map((e) => Object.assign({}, e, { draftBody: (i) => s.edits[e.id + ":" + i] !== void 0 ? s.edits[e.id + ":" + i] : e.drafts[i].body }));
+    const emails = unreplied.map((e) => Object.assign({}, e, { draftBody: (i) => { if (e.noReply || !e.drafts || !e.drafts.length) return s.edits[e.id + ":" + i] !== void 0 ? s.edits[e.id + ":" + i] : ""; const d = e.drafts[i] || e.drafts[0]; return s.edits[e.id + ":" + i] !== void 0 ? s.edits[e.id + ":" + i] : (d && d.body) || ""; } }));
     const events = flags.calendar ? u.events.slice().sort((a, b) => a.date + a.start < b.date + b.start ? -1 : 1) : [];
     const todayEvents = events.filter((e) => e.date === today);
     const now = nowHHMM || "00:00";
@@ -1142,6 +1336,9 @@ var AOEngine = (() => {
       if (left0 > 0 && s.selected.length) targets.push({ label: "Setup", text: s.selected.length - left0 + " of " + s.selected.length + " connected", pct: (s.selected.length - left0) / s.selected.length });
     }
     const left = setupLeft(s);
+    const agenda = buildAgenda(todayEvents, nowHHMM, s.places || [], s.eventPlaces || {});
+    const filed = (u.filed || []).filter((e) => (s.replied || []).indexOf(e.id) === -1);
+    const forward = buildForward(u, s, today, flags, liveData && liveData.extras, { invoices });
     const overview = buildOverview(u, flags, { revenueSource, salesDay, countDay, inDay, today, yest, invoices, unreplied, nextEvent, todayEvents, unit, units, salesNames });
     const teasers = [];
     teasers.push(flags.mail ? { text: unreplied.length ? unreplied.length + " " + plural(unreplied.length, "email needs", "emails need") + " a reply" : "You\u2019re all caught up on email", tab: "inbox" } : { text: "Connect your email to see what needs a reply", tab: "connections", muted: true });
@@ -1170,12 +1367,18 @@ var AOEngine = (() => {
       activity,
       activityEmpty,
       emails,
+      filed,
       emailsRepliedCount: s.replied.length,
       emailTotal: u.emails.length,
       otherMessages: u.otherMessages,
       events,
       todayEvents,
       nextEvent,
+      agenda,
+      forward,
+      agentActivity: s.activityLog || [],
+      dailyOverview: s.dailyOverview && s.dailyOverview.date === today ? s.dailyOverview : null,
+      overviewPrefs: s.overviewPrefs || { time: "07:00", showReply: true, showInvoices: true, showBookings: true, showNewsletters: true },
       tasks: shownTasks,
       targets,
       overview,

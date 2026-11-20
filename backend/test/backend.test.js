@@ -299,11 +299,14 @@ test("ics + caldav + calendly through the Worker", async () => {
   assert.equal(ce.events[0].title, "Intro call"); assert.equal(ce.events[0].place, "Video call");
 });
 
-test("ai drafts only when configured, and parse the provider answer", async () => {
-  const h = createHandler({ fetchImpl: async (url, init) => new Response(JSON.stringify({ choices: [{ message: { content: 'Sure: {"drafts":[{"label":"Quick","body":"Hi Sam, thanks."},{"label":"Fuller","body":"Hi Sam, details please."}]}' } }] })) });
-  assert.equal((await call(h, ENV, "/ai/draft", { method: "POST", body: { from: "Sam", subject: "x", snippet: "y" } })).status, 503);
-  const j = await (await call(h, { ...ENV, AI_API_URL: "https://ai.example/v1/chat", AI_API_KEY: "k" }, "/ai/draft", { method: "POST", body: { from: "Sam", subject: "x", snippet: "y", business: "B", owner: "O" } })).json();
-  assert.equal(j.drafts.length, 2);
+test("/ai/draft and /draft return a content-aware fallback when Workers AI is not bound", async () => {
+  const h = createHandler({ fetchImpl: async () => { throw new Error("no network"); } });
+  const a = await (await call(h, ENV, "/ai/draft", { method: "POST", body: { from: "Sam Hill", subject: "Can we talk?", snippet: "Are you free for a call later this week?", owner: "Archie Owen" } })).json();
+  assert.equal(a.skip, false);
+  assert.match(a.drafts[0].body, /happy to speak|Hi Sam/i);
+  assert.doesNotMatch(a.drafts[0].body, /get back to you shortly/i);
+  const b = await (await call(h, ENV, "/draft", { method: "POST", body: { from: "News", address: "newsletter@x.com", subject: "This week in F4", snippet: "Unsubscribe. You are receiving this because you subscribed. View in your browser.", headers: { "list-unsubscribe": "<mailto:unsub@x.com>" } } })).json();
+  assert.equal(b.skip, true);
 });
 
 test("imap/detect: well-known providers resolve without any network", async () => {

@@ -23,7 +23,8 @@ test("gmail message becomes an email card with drafts and reply metadata", () =>
   assert.match(m.snippet, /2027 & the Brands Hatch round\? Thanks, Sam's team/);
   assert.equal(m.id, "g:m1"); assert.equal(m.live, true);
   assert.equal(m.meta.address, "sam.direct@apexlube.co.uk"); assert.equal(m.meta.threadId, "t1"); assert.equal(m.meta.rfcId, "<abc@mail.x>");
-  assert.equal(m.drafts.length, 2); assert.match(m.drafts[0].body, /^Hi Sam,/); assert.match(m.drafts[0].body, /Archie Owen$/);
+  assert.ok(m.drafts.length >= 1); assert.match(m.drafts[0].body, /^Hi Sam,/); assert.match(m.drafts[0].body, /Archie$/);
+  assert.doesNotMatch(m.drafts[0].body, /get back to you shortly/i);
   assert.equal(m._auto, false);
   const news = T.mapGmail({ ...gmail, payload: { headers: [{ name: "From", value: "Shop <noreply@shop.com>" }, { name: "Subject", value: "x" }, { name: "List-Unsubscribe", value: "<mailto:u@x>" }] } }, "A", "B");
   assert.equal(news._auto, true);
@@ -85,7 +86,43 @@ test("engine: live data replaces sample data only for live connections, and reve
   assert.equal(u3.emails.length, 0); assert.equal(u3.bank.length, 0);
 });
 
-test("template drafts are polite and never invent facts", () => {
+test("template drafts are polite, content-aware and never invent facts", () => {
   const d = E.templateDrafts({ from: "Jo Bloggs", subject: "Re: Quote please?", snippet: "How much for a day?" }, "Archie Owen", "AOR");
-  assert.match(d[0].body, /Hi Jo,/); assert.match(d[0].body, /will come back to you/); assert.doesNotMatch(d[0].body + d[1].body, /£|\d{2}:\d{2}/);
+  assert.match(d[0].body, /Hi Jo,/);
+  assert.match(d[0].body, /Archie/);
+  assert.match(d[0].body, /\[\[/);
+  assert.doesNotMatch(d[0].body, /get back to you shortly|come back to you with a proper answer shortly/i);
+  assert.doesNotMatch(d[0].body, /£|\d{2}:\d{2}/);
+  const s = E.templateDrafts({ from: "Hannah Cole", subject: "Re: leak", snippet: "We're going to try and get that sorted for you." }, "Archie Owen", "AOR");
+  assert.match(s[0].body, /let me know/i);
+  assert.doesNotMatch(s[0].body, /get back to you shortly/i);
+  assert.ok(E.classifyNoReply({ from: "News", address: "newsletter@x.com", subject: "This week in British F4", snippet: "Unsubscribe. You are receiving this because you subscribed. View in your browser." }));
+});
+
+test("agenda marks the next event, gaps and travel hints without inventing places", () => {
+  const ev = [
+    { id: "a", title: "Workshop brief", start: "09:00", end: "10:00", date: "2026-11-20", place: "Workshop", kind: "business" },
+    { id: "b", title: "Silverstone test", start: "13:00", end: "16:00", date: "2026-11-20", place: "Silverstone Circuit", kind: "business" },
+  ];
+  const places = [{ id: "w", name: "Workshop", address: "Unit 4, CF10 1AA" }, { id: "s", name: "Silverstone", address: "Silverstone Circuit, NN12 8TN" }];
+  const ag = E.buildAgenda(ev, "08:30", places, { a: "w", b: "s" });
+  assert.equal(ag.nextId, "a");
+  assert.ok(ag.rows.some((r) => r.type === "event" && r.highlight && /Next up/.test(r.highlight)));
+  assert.ok(ag.rows.some((r) => r.type === "gap" && /Free gap/.test(r.label)));
+  assert.ok(ag.rows.some((r) => r.type === "travel" && /Travel from/.test(r.label)));
+  assert.ok(ag.rows.filter((r) => r.type === "event")[1].place.maps.indexOf("maps") !== -1);
+});
+
+test("business forward is empty-safe and motorsport-aware", () => {
+  const s = E.parseState(null);
+  s.business = { name: "Archie Owen Racing", type: "business", industry: "motorsport" };
+  s.replied = [];
+  const u = { emails: [{ id: "1", from: "Sam Hill", org: "Apex Lube", subject: "Sponsorship call", snippet: "Can we talk about next season?", when: "8 days ago" }], events: [{ id: "e", title: "Silverstone test day", date: "2026-11-22", start: "09:00", place: "Silverstone" }], bank: [] };
+  const f = E.buildForward(u, s, "2026-11-20", { mail: true, calendar: true }, {}, {});
+  assert.equal(f.motor, true);
+  assert.equal(f.pipeline[0].quiet, true);
+  assert.equal(f.upcoming[0].title, "Silverstone test day");
+  const personal = E.parseState(null);
+  personal.business = { name: "Home", type: "personal", industry: "other" };
+  assert.equal(E.buildForward(u, personal, "2026-11-20", {}, {}, {}), null);
 });

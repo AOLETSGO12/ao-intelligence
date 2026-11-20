@@ -322,16 +322,39 @@
     var today = isoLocal(new Date());
     return E.whenLabel(isoLocal(date), today) + " " + hhmm(date);
   }
+  function gmailPlain(msg, max) {
+    max = max || 1200;
+    function walk(part) {
+      if (!part) return "";
+      var mime = String((part.mimeType || "")).toLowerCase();
+      var data = part.body && part.body.data ? part.body.data : "";
+      if (data && (mime === "text/plain" || (!mime && !part.parts))) {
+        try { return decodeURIComponent(escape(atob(String(data).replace(/-/g, "+").replace(/_/g, "/")))); } catch (e) { return ""; }
+      }
+      var kids = part.parts || [];
+      var plain = "", html = "";
+      for (var i = 0; i < kids.length; i++) {
+        var t = walk(kids[i]);
+        if ((kids[i].mimeType || "").toLowerCase() === "text/html" && !html) html = t;
+        else if (t && !plain) plain = t;
+      }
+      return plain || html;
+    }
+    var text = walk(msg.payload).replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+    if (!text) text = decodeEntities(msg.snippet || "");
+    return text.length > max ? text.slice(0, max - 1) + "…" : text;
+  }
   function mapGmail(msg, owner, business) {
     var h = headerMap(msg), a = parseAddress(h.from);
     var replyTo = h["reply-to"] ? parseAddress(h["reply-to"]) : a;
     var d = new Date(Number(msg.internalDate) || Date.parse(h.date) || Date.now());
     var snippet = decodeEntities(msg.snippet || "");
     var subject = (h.subject || "(no subject)").trim();
-    var drafts = E.templateDrafts({ from: a.name, subject: subject, snippet: snippet }, owner, business);
+    var drafts = E.templateDrafts({ from: a.name, subject: subject, snippet: snippet, address: replyTo.address, headers: h }, owner, business);
     return {
       id: "g:" + msg.id, from: a.name, org: orgFromDomain(a.domain) || a.domain, subject: subject, snippet: snippet.length > 220 ? snippet.slice(0, 217) + "…" : snippet,
-      when: whenFor(d), drafts: drafts, live: true,
+      body: snippet, when: whenFor(d), drafts: drafts, live: true,
+      headers: { "list-unsubscribe": h["list-unsubscribe"] || "", "auto-submitted": h["auto-submitted"] || "", precedence: h.precedence || "" },
       meta: { provider: "google", messageId: msg.id, threadId: msg.threadId, address: replyTo.address, subject: subject, rfcId: h["message-id"], refs: h.references },
       _auto: !!h["list-unsubscribe"] || AUTO_SENDER.test(a.address) || AUTO_SENDER.test(a.name), _t: d.getTime()
     };
@@ -348,16 +371,25 @@
       var mapped = msgs.map(function (m) { return mapGmail(m, ctx.owner, ctx.business); });
       var byThread = {}; mapped.forEach(function (m) { if (!byThread[m.meta.threadId] || byThread[m.meta.threadId]._t < m._t) byThread[m.meta.threadId] = m; });
       var cands = Object.keys(byThread).map(function (k) { return byThread[k]; }).filter(function (m) { return !m._auto; }).sort(function (a, b) { return b._t - a._t; }).slice(0, 14);
+      var filed = Object.keys(byThread).map(function (k) { return byThread[k]; }).filter(function (m) { return m._auto; }).sort(function (a, b) { return b._t - a._t; }).slice(0, 15);
+      filed.forEach(function (m) { m.noReply = true; m.noReplyReason = "No reply needed"; m.drafts = []; delete m._auto; delete m._t; });
       return Promise.all(cands.map(function (m) {
-        return gfetch(base + "threads/" + m.meta.threadId + "?format=minimal").then(function (t) {
-          var last = (t.messages || []).slice(-1)[0];
+        return gfetch(base + "threads/" + m.meta.threadId + "?format=full").then(function (t) {
+          var msgs = t.messages || [];
+          var last = msgs.slice(-1)[0];
           m._replied = !!(last && (last.labelIds || []).indexOf("SENT") !== -1);
+          m.thread = msgs.slice(-4).map(function (x) {
+            var hh = headerMap(x);
+            var a = parseAddress(hh.from);
+            return { from: a.name || a.address, date: hh.date || "", text: gmailPlain(x, 1200) };
+          });
+          if (m.thread.length) m.body = m.thread[m.thread.length - 1].text || m.snippet;
           return m;
         }).catch(function () { return m; });
       })).then(function (cs) {
         var need = cs.filter(function (m) { return !m._replied; }).slice(0, 10);
         need.forEach(function (m) { delete m._auto; delete m._t; delete m._replied; });
-        return { emails: need, other: Math.max(0, mapped.length - need.length) };
+        return { emails: need, filed: filed, other: Math.max(0, mapped.length - need.length) };
       });
     });
   }
@@ -477,7 +509,7 @@
     var rt = m.replyTo && m.replyTo[0] && m.replyTo[0].emailAddress && m.replyTo[0].emailAddress.address;
     return {
       id: "m:" + m.id, from: name, org: orgFromDomain(domain) || domain, subject: subject, snippet: snippet.length > 220 ? snippet.slice(0, 217) + "…" : snippet,
-      when: whenFor(d), drafts: E.templateDrafts({ from: name, subject: subject, snippet: snippet }, owner, business), live: true,
+      when: whenFor(d), body: snippet, drafts: E.templateDrafts({ from: name, subject: subject, snippet: snippet, address: rt || a.address }, owner, business), live: true,
       meta: { provider: "microsoft", messageId: m.id, threadId: m.conversationId, address: rt || a.address, subject: subject },
       _auto: AUTO_SENDER.test(a.address) || AUTO_SENDER.test(a.name), _other: m.inferenceClassification === "other", _t: d.getTime(), _conv: m.conversationId
     };
@@ -491,6 +523,8 @@
     ]).then(function (res) {
       var sent = {}; (res[1].value || []).forEach(function (s) { var t = Date.parse(s.sentDateTime); if (!sent[s.conversationId] || sent[s.conversationId] < t) sent[s.conversationId] = t; });
       var mapped = (res[0].value || []).map(function (m) { return mapGraphMail(m, ctx.owner, ctx.business); });
+      var filed = mapped.filter(function (m) { return m._auto || m._other; }).slice(0, 15);
+      filed.forEach(function (m) { m.noReply = true; m.noReplyReason = "No reply needed"; m.drafts = m.drafts || []; delete m._auto; delete m._other; delete m._t; delete m._conv; });
       var seen = {};
       var need = mapped.filter(function (m) {
         if (m._auto || m._other) return false;
@@ -498,7 +532,22 @@
         if (seen[m._conv]) return false; seen[m._conv] = 1; return true;
       }).slice(0, 10);
       need.forEach(function (m) { delete m._auto; delete m._other; delete m._t; delete m._conv; });
-      return { emails: need, other: Math.max(0, mapped.length - need.length) };
+      return Promise.all(need.map(function (m) {
+        if (!m.meta.threadId) return m;
+        var filter = "conversationId eq '" + String(m.meta.threadId).replace(/'/g, "''") + "'";
+        return gr("/me/messages?" + q({ "$top": 4, "$select": "id,from,receivedDateTime,bodyPreview,body", "$orderby": "receivedDateTime asc", "$filter": filter }), { headers: { Prefer: 'outlook.body-content-type="text"' } })
+          .then(function (r) {
+            m.thread = (r.value || []).slice(-4).map(function (x) {
+              var nm = (x.from && x.from.emailAddress && (x.from.emailAddress.name || x.from.emailAddress.address)) || "";
+              var text = "";
+              if (x.body && x.body.content) text = String(x.body.content).replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+              if (!text) text = String(x.bodyPreview || "").trim();
+              return { from: nm, date: x.receivedDateTime || "", text: text.slice(0, 1200) };
+            });
+            if (m.thread.length) m.body = m.thread[m.thread.length - 1].text || m.snippet;
+            return m;
+          }).catch(function () { return m; });
+      })).then(function (emails) { return { emails: emails, filed: filed, other: Math.max(0, mapped.length - need.length) }; });
     });
   }
   function mapGraphEvents(items, from, to) {
@@ -537,16 +586,74 @@
   }
 
   // ------------------------------------------------------------ AI / template drafts
+  function sealedMail() {
+    var t = loadTokens();
+    return t.sealed && t.sealed.mail && t.sealed.mail.sealed ? t.sealed.mail.sealed : "";
+  }
+  function draftPayload(m, ctx, extra) {
+    extra = extra || {};
+    return {
+      from: m.from || "",
+      address: (m.meta && m.meta.address) || m.address || "",
+      subject: m.subject || "",
+      snippet: m.snippet || "",
+      body: m.body || m.snippet || "",
+      thread: m.thread || [],
+      headers: m.headers || {},
+      owner: ctx.owner || "",
+      business: ctx.business || "",
+      type: ctx.type || "",
+      industry: ctx.industry || "",
+      tone: extra.tone || "friendly",
+      rewrite: !!extra.rewrite,
+      previous: extra.previous || "",
+      sealed: sealedMail() || undefined,
+      tz: tz()
+    };
+  }
+  function applyDraftResult(m, j) {
+    if (j && j.skip) { m.noReply = true; m.noReplyReason = j.reason || "No reply needed"; m.drafts = []; return; }
+    if (j && j.drafts && j.drafts.length) {
+      m.drafts = j.drafts.slice(0, 3).map(function (d) { return { label: String(d.label || "Draft").slice(0, 24), body: String(d.body || "") }; });
+      m.noReply = false;
+    }
+  }
+  function markLocalSkip(m) {
+    if (E.classifyNoReply && E.classifyNoReply({ from: m.from, address: m.meta && m.meta.address, subject: m.subject, snippet: m.snippet, body: m.body, headers: m.headers, thread: m.thread })) {
+      m.noReply = true; m.noReplyReason = "No reply needed"; m.drafts = [];
+      return true;
+    }
+    return false;
+  }
   function maybeAiDrafts(emails, ctx, caps) {
     var c = cfg();
-    var endpoint = c.draftEndpoint ? c.draftEndpoint : (c.backendUrl && caps && caps.caps && caps.caps.ai ? c.backendUrl + "/ai/draft" : "");
-    if (!endpoint || !emails.length) return Promise.resolve(emails);
-    return Promise.all(emails.slice(0, 6).map(function (m) {
-      return fetchTimeout(endpoint, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ from: m.from, subject: m.subject, snippet: m.snippet, business: ctx.business, owner: ctx.owner }) }, 20000)
-        .then(function (r) { return r.ok ? r.json() : null; }).then(function (j) {
-          if (j && j.drafts && j.drafts.length) { m.drafts = j.drafts.slice(0, 3).map(function (d) { return { label: String(d.label || "Draft").slice(0, 24), body: String(d.body || "") }; }); m.aiDrafts = true; }
-        }).catch(function () { /* keep templates */ });
-    })).then(function () { return emails; });
+    var endpoint = c.backendUrl ? c.backendUrl + "/draft" : "";
+    emails.forEach(function (m) { markLocalSkip(m); });
+    var work = emails.filter(function (m) { return !m.noReply; }).slice(0, 8);
+    if (!endpoint || !work.length) return Promise.resolve(emails);
+    var i = 0;
+    function one(m) {
+      return fetchTimeout(endpoint, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(draftPayload(m, ctx)) }, 30000)
+        .then(function (r) { return r.ok ? r.json() : null; }).then(function (j) { if (j) applyDraftResult(m, j); }).catch(function () { /* keep the content-aware template */ });
+    }
+    function nextBatch() {
+      if (i >= work.length) return Promise.resolve();
+      var batch = work.slice(i, i + 3);
+      i += 3;
+      return Promise.all(batch.map(one)).then(nextBatch);
+    }
+    return nextBatch().then(function () { return emails; });
+  }
+  function rewriteDraft(email, ctx, opts) {
+    opts = opts || {};
+    var c = cfg();
+    var endpoint = c.backendUrl ? c.backendUrl + "/draft" : "";
+    if (!endpoint) {
+      var fb = E.templateDrafts(email, ctx.owner, ctx.business, opts.tone);
+      return Promise.resolve({ skip: false, drafts: fb });
+    }
+    return fetchTimeout(endpoint, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(draftPayload(email, ctx, { tone: opts.tone, rewrite: true, previous: opts.previous })) }, 30000)
+      .then(function (r) { if (!r.ok) throw new Error("The draft couldn’t be rewritten just now."); return r.json(); });
   }
 
   // ------------------------------------------------------------ backend data (normalised by the Worker into the same shapes)
@@ -694,7 +801,7 @@
   // ------------------------------------------------------------ loading everything for the dashboard
   function load(state) {
     var conns = state.connected || {};
-    var ctx = { owner: state.account ? state.account.name : "", business: state.business ? state.business.name : "" };
+    var ctx = { owner: state.account ? state.account.name : "", business: state.business ? state.business.name : "", type: state.business && state.business.type ? state.business.type : "", industry: state.business && state.business.industry ? state.business.industry : "" };
     var out = { errors: {}, accounts: {}, extras: {} };
     var jobs = [];
     function job(key, fn) { jobs.push(fn().catch(function (e) { out.errors[key] = friendly(e, "We couldn’t load this just now."); if (e && e.reauth) { out.reauth = out.reauth || {}; out.reauth[key] = conns[key].route; } })); }
@@ -707,8 +814,8 @@
           var p = c.route === "google" ? fetchGmail(ctx) : c.route === "microsoft" ? fetchOutlook(ctx) : backendData("mail", "/data/mail", { owner: ctx.owner, business: ctx.business });
           return p.then(function (r) {
             var emails = r.emails || [];
-            if (c.route === "imap") emails.forEach(function (m) { if (m.when_iso) m.when = whenFor(new Date(m.when_iso)); m.drafts = m.drafts && m.drafts.length ? m.drafts : E.templateDrafts({ from: m.from, subject: m.subject, snippet: m.snippet }, ctx.owner, ctx.business); m.live = true; });
-            return maybeAiDrafts(emails, ctx, caps).then(function (em) { out.mail = em; out.otherMessages = r.other || 0; });
+            if (c.route === "imap") emails.forEach(function (m) { if (m.when_iso) m.when = whenFor(new Date(m.when_iso)); m.drafts = m.drafts && m.drafts.length ? m.drafts : E.templateDrafts({ from: m.from, subject: m.subject, snippet: m.snippet, body: m.body, thread: m.thread, headers: m.headers, address: m.meta && m.meta.address }, ctx.owner, ctx.business); m.live = true; });
+            return maybeAiDrafts(emails, ctx, caps).then(function (em) { out.mail = em; out.filed = r.filed || []; out.otherMessages = r.other || 0; });
           });
         });
         else if (key === "calendar" && c.route !== "local") job(key, function () {
@@ -741,6 +848,14 @@
     });
   }
 
+
+  function fetchOverview(payload) {
+    var c = cfg();
+    if (!c.backendUrl) return Promise.resolve(null);
+    var body = Object.assign({ tz: tz(), sealed: sealedMail() || undefined }, payload || {});
+    return fetchTimeout(c.backendUrl + "/overview", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) }, 60000)
+      .then(function (r) { return r.ok ? r.json() : null; });
+  }
   function saveDraft(email, body, conns) {
     var p = email.meta && email.meta.provider;
     if (p === "google") return saveGmailDraft(email, body);
@@ -752,7 +867,7 @@
   root.AOLive = {
     config: cfg, configured: configured, redirectUri: redirectUri, route: route, backendCaps: backendCaps,
     liveSession: liveSession, complete: complete, connect: connect, detectImap: detectImap, finishRedirect: finishRedirect, reconnect: reconnect, disconnect: disconnect,
-    _preload: loadGis, cancelPending: cancelPending, RESULT_KEY: RESULT_KEY, load: load, saveDraft: saveDraft, clearTokens: clearTokens, KIND_LABEL: KIND_LABEL,
+    _preload: loadGis, cancelPending: cancelPending, RESULT_KEY: RESULT_KEY, load: load, saveDraft: saveDraft, rewriteDraft: rewriteDraft, fetchOverview: fetchOverview, clearTokens: clearTokens, KIND_LABEL: KIND_LABEL,
     // exposed for tests
     _t: { mapGmail: mapGmail, mapGoogleEvents: mapGoogleEvents, mapGraphMail: mapGraphMail, mapGraphEvents: mapGraphEvents, parseAddress: parseAddress, decodeEntities: decodeEntities, msBuildAuthUrl: msBuildAuthUrl, fieldsFor: fieldsFor, orgFromDomain: orgFromDomain, AUTO_SENDER: AUTO_SENDER }
   };

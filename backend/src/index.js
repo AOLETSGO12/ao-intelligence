@@ -6,7 +6,7 @@
 //   /stripe/*     Stripe balance, charges and payouts (restricted key, or Connect OAuth)
 //   /shopify/*    Shopify orders and sales (custom-app token, or OAuth)
 //   /ics, /caldav, /calendly   calendar links, CalDAV servers and Calendly
-//   /ai/draft     optional smarter reply drafts
+//   /draft        reply drafts (Workers AI, with a content-aware fallback). Email text is not stored or logged.
 //
 // It stores nothing. Credentials are encrypted ("sealed") with SEAL_KEY and given to the browser,
 // which sends them back for each request. Revoking = deleting the browser's copy (and the provider's grant).
@@ -18,7 +18,8 @@ import { discoverCalendars, fetchCaldavEvents, calendlyUser, calendlyEvents, nor
 import * as TL from "./truelayer.js";
 import * as ST from "./stripe.js";
 import * as SH from "./shopify.js";
-import { aiDrafts } from "./ai.js";
+import { makeDrafts, rateLimitDraft, rateKey } from "./drafts.js";
+import { makeOverview } from "./overview.js";
 import { detectImap } from "./detect.js";
 import { candidateImapHosts, loginErrorFor, isRetryableImapError } from "./imap-hosts.js";
 
@@ -61,7 +62,7 @@ export function caps(env) {
     stripe: sealed, stripe_oauth: sealed && !!(env.STRIPE_CONNECT_CLIENT_ID && env.STRIPE_SECRET_KEY),
     shopify: sealed, shopify_oauth: sealed && !!(env.SHOPIFY_API_KEY && env.SHOPIFY_API_SECRET),
     truelayer: sealed && !!(env.TRUELAYER_CLIENT_ID && env.TRUELAYER_CLIENT_SECRET),
-    ai: !!(env.AI_API_URL && env.AI_API_KEY),
+    ai: !!(env.AI) || !!(env.AI_API_URL && env.AI_API_KEY),
   };
 }
 
@@ -259,9 +260,59 @@ export function createHandler({ fetchImpl = fetch, openImap = (host) => connectT
         throw new HttpError(400, "That isn’t a sales connection.");
       }
     }
-    if (path === "/ai/draft") {
-      need(env, "AI_API_URL", "AI_API_KEY");
-      return json(env, request, await aiDrafts(env, fetchImpl, body));
+    if (path === "/draft" || path === "/ai/draft") {
+      const started = Date.now();
+      const ip = request.headers.get("cf-connecting-ip") || request.headers.get("x-forwarded-for") || "";
+      const key = await rateKey(typeof body.sealed === "string" ? body.sealed : "", ip, body.owner || "");
+      rateLimitDraft(key);
+      const input = {
+        from: body.from || "",
+        address: body.address || "",
+        subject: body.subject || "",
+        snippet: body.snippet || "",
+        body: body.body || "",
+        thread: Array.isArray(body.thread) ? body.thread.slice(-4) : [],
+        headers: body.headers && typeof body.headers === "object" ? body.headers : {},
+        owner: body.owner || "",
+        business: body.business || "",
+        type: body.type || "",
+        industry: body.industry || "",
+        tone: body.tone || "friendly",
+        rewrite: !!body.rewrite,
+        previous: body.previous || "",
+      };
+      const result = await makeDrafts(env, input);
+      try { console.log(JSON.stringify({ ev: "draft", ok: true, skipped: !!result.skip, ai: result.source === "ai", ms: Date.now() - started })); } catch (e) { /* never log the email */ }
+      return json(env, request, { skip: !!result.skip, reason: result.reason || "", drafts: result.drafts || [] });
+    }
+    if (path === "/overview") {
+      const started = Date.now();
+      const ip = request.headers.get("cf-connecting-ip") || request.headers.get("x-forwarded-for") || "";
+      const key = await rateKey(typeof body.sealed === "string" ? "o:" + body.sealed : "o:", ip, body.owner || "");
+      rateLimitDraft(key, 20, 15 * 60 * 1000);
+      const input = {
+        owner: body.owner || "",
+        business: body.business || "",
+        type: body.type || "",
+        industry: body.industry || "",
+        emails: Array.isArray(body.emails) ? body.emails.slice(0, 20).map((e) => ({
+          id: e && e.id || "",
+          from: e && e.from || "",
+          subject: e && e.subject || "",
+          snippet: String((e && (e.snippet || e.body)) || "").slice(0, 200),
+          noReply: !!(e && e.noReply),
+        })) : [],
+        events: Array.isArray(body.events) ? body.events.slice(0, 12) : [],
+        money: body.money && typeof body.money === "object" ? {
+          balance: body.money.balance,
+          overdueCount: body.money.overdueCount,
+          overdueTotal: body.money.overdueTotal,
+          dueTotal: body.money.dueTotal,
+        } : null,
+      };
+      const result = await makeOverview(env, input);
+      try { console.log(JSON.stringify({ ev: "overview", ok: true, ai: result.source === "ai", ms: Date.now() - started })); } catch (e) { /* never log the email */ }
+      return json(env, request, { summary: result.summary, categories: result.categories, actions: result.actions || [] });
     }
     throw new HttpError(404, "Not found.");
   }

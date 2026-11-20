@@ -26,7 +26,7 @@
   var live = null;          // real data fetched from live connections (null until loaded)
   var loading = false;
   var L = window.AOLive;
-  var ui = { day: null, draft: {}, copied: null, saved: {}, saveErr: {}, editTask: null, editTarget: null, addingTarget: false, editGoal: false, addingPlace: false, editPlace: null };
+  var ui = { day: null, draft: {}, tone: {}, rewriting: {}, copied: null, saved: {}, saveErr: {}, editTask: null, editTarget: null, addingTarget: false, editGoal: false, addingPlace: false, editPlace: null, inboxFilter: "reply" };
   var REAL = !S.demo;
   if (REAL) E.ITEM_ORDER.sort(function (a, b) { var o = ["mail", "calendar", "bank", "sales:stripe", "sales:shopify"], A = o.indexOf(a), B = o.indexOf(b); return (A === -1 ? 99 : A) - (B === -1 ? 99 : B); });
   function uid() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 6); }
@@ -126,7 +126,12 @@
     if (!L || !hasLive()) { live = null; loading = false; return Promise.resolve(); }
     loading = !live || force === "block";
     if (loading) draw();
-    return L.load(state).then(function (d) { live = d; loading = false; draw(); }).catch(function () { loading = false; draw(); });
+    return L.load(state).then(function (d) {
+      live = d; loading = false;
+      afterLive(d);
+      draw();
+      return maybeOverview().then(function () { draw(); });
+    }).catch(function () { loading = false; draw(); });
   }
   function pill(isLive) { if (REAL) return document.createTextNode(""); return h("span", { class: "src-pill " + (isLive ? "is-live" : "is-sample") }, isLive ? "Live" : "Sample"); }
   function liveNotices() {
@@ -144,6 +149,77 @@
     });
     return wrap;
   }
+
+  function afterLive(d) {
+    var today = E.todayIso();
+    var drafted = ((d && d.mail) || []).filter(function (m) { return !m.noReply && m.drafts && m.drafts.length; });
+    if (drafted.length) {
+      var names = drafted.slice(0, 3).map(function (m) { return m.from; });
+      E.logActivity(state, today, "drafts", drafted.length === 1 ? "Drafted a reply to " + names[0] : "Drafted " + drafted.length + " replies", drafted.length === 1 ? (drafted[0].subject || "") : "Including " + names.join(", "));
+    }
+    var filed = (d && d.filed) || [];
+    if (filed.length) E.logActivity(state, today, "filed", filed.length === 1 ? "Filed a newsletter" : "Filed " + filed.length + " newsletters", "Newsletters and notifications were set aside so they wouldn’t sit with messages that need you.");
+    var invoices = ((d && d.mail) || []).concat(filed).filter(function (m) { return E.classifyEmail(m) === "invoice"; });
+    if (invoices.length) E.logActivity(state, today, "invoice", invoices.length === 1 ? "Noted an invoice from " + invoices[0].from : "Noted " + invoices.length + " invoice or payment messages", invoices[0] ? invoices[0].subject : "");
+    save();
+  }
+  function mailSig(d) {
+    return ((d && d.mail) || []).concat((d && d.filed) || []).map(function (m) { return m.id; }).sort().join(",");
+  }
+  function maybeOverview() {
+    if (!L || !L.fetchOverview || !live) return Promise.resolve();
+    var today = E.todayIso();
+    var sig = mailSig(live);
+    if (state.dailyOverview && state.dailyOverview.date === today && state.dailyOverview.sig === sig) return Promise.resolve();
+    var events = (live.calendar || []).filter(function (e) { return e.date >= today; }).slice(0, 12).map(function (e) {
+      return { id: e.id, title: e.title, date: e.date, start: e.start, end: e.end, place: e.place, today: e.date === today, upcoming: e.date >= today };
+    });
+    var money = {};
+    if (view && view.extras && view.extras.bank && typeof view.extras.bank.balance === "number") money.balance = view.extras.bank.balance;
+    if (view && view.invoices) { money.overdueCount = view.invoices.overdueCount; money.overdueTotal = view.invoices.overdueTotal; money.dueTotal = view.invoices.dueTotal; }
+    return L.fetchOverview({
+      owner: state.account && state.account.name || "",
+      business: state.business && state.business.name || "",
+      type: state.business && state.business.type || "",
+      industry: state.business && state.business.industry || "",
+      emails: ((live.mail || []).concat(live.filed || [])).slice(0, 20).map(function (m) { return { id: m.id, from: m.from, subject: m.subject, snippet: m.snippet, noReply: !!m.noReply }; }),
+      events: events,
+      money: money
+    }).then(function (j) {
+      if (!j || !j.summary) return;
+      state.dailyOverview = { date: today, sig: sig, summary: j.summary, categories: j.categories, actions: j.actions || [], at: new Date().toISOString() };
+      E.logActivity(state, today, "overview", "Prepared today’s overview", "Looked through your recent mail and diary.");
+      save();
+    }).catch(function () { /* keep the on-device briefing */ });
+  }
+  function activityWhen(a) {
+    if (!a || !a.at) return a && a.date ? E.whenLabel(a.date, view.today) : "";
+    var d = new Date(a.at);
+    if (isNaN(d.getTime())) return "";
+    var day = d.toLocaleDateString("en-CA", { timeZone: "Europe/London" });
+    var time = d.toLocaleTimeString("en-GB", { timeZone: "Europe/London", hour: "numeric", minute: "2-digit", hour12: true }).toLowerCase().replace(" ", "");
+    return day === view.today ? time : E.whenLabel(day, view.today) + ", " + time;
+  }
+  function openInbox(filter) { ui.inboxFilter = filter || "reply"; go("inbox"); }
+  function categoryModel() {
+    var ov = view.dailyOverview && view.dailyOverview.categories;
+    if (ov && (ov.reply || ov.invoices || ov.newsletters)) return ov;
+    var ids = { reply: [], invoices: [], bookings: [], newsletters: [] };
+    (view.emails || []).filter(function (e) { return !e.noReply; }).forEach(function (e) { ids.reply.push(e.id); });
+    (view.emails || []).concat(view.filed || []).forEach(function (e) {
+      var c = E.classifyEmail(e);
+      if (c === "invoice") ids.invoices.push(e.id);
+      else if (c === "booking") ids.bookings.push(e.id);
+      else if (c === "newsletter") ids.newsletters.push(e.id);
+    });
+    return {
+      reply: { count: ids.reply.length, ids: ids.reply, blurb: ids.reply.length ? ids.reply.length + " waiting for a reply." : "Nothing needs a reply." },
+      invoices: { count: ids.invoices.length, ids: ids.invoices, blurb: ids.invoices.length ? "Invoice or payment messages in your recent mail." : "No invoices or payments in the recent mail." },
+      bookings: { count: ids.bookings.length, ids: ids.bookings, blurb: ids.bookings.length ? "Booking or appointment messages." : "No booking or appointment messages." },
+      newsletters: { count: ids.newsletters.length, ids: ids.newsletters, blurb: ids.newsletters.length ? ids.newsletters.length + " filed." : "No newsletters filed." }
+    };
+  }
+
   function go(tab) { setTab(tab); }
 
   // ---------- helpers ----------
@@ -168,32 +244,142 @@
     root.appendChild(pageHead(greet + (first ? ", " + first : ""), view.todayLabel + " · " + view.name));
     if (view.setupLeft) {
       root.appendChild(h("button", { class: "app-nudge", type: "button", on: { click: function () { window.location.href = "start.html#connect"; } } },
-        h("strong", null, "Finish setup (" + view.setupLeft + " left)"), h("span", null, "Connect the rest in about " + E.minutesLeft({ step: "w-pick", cursor: 0, selected: state.selected, connected: state.connected }) + " min →")));
+        h("strong", null, "Finish setup (" + view.setupLeft + " left)"), h("span", null, "Connect the rest in about " + E.minutesLeft({ step: "w-pick", cursor: 0, selected: state.selected, connected: state.connected }) + " min")));
     }
-    var brief = card("Your briefing", "Today");
-    brief.appendChild(h("p", { class: "overview-body" }, view.overview.body));
-    if (view.overview.suggestions.length) {
-      brief.appendChild(h("details", { class: "app-ideas" }, h("summary", null, "Ideas for today (" + view.overview.suggestions.length + ")"),
-        h("ol", { class: "suggestion-list" }, view.overview.suggestions.map(function (t) { return h("li", null, t); }))));
-    }
-    root.appendChild(brief);
 
-    root.appendChild(h("div", { class: "teasers" }, view.teasers.map(function (t) {
-      return h("button", { class: "teaser" + (t.muted ? " is-muted" : ""), type: "button", on: { click: function () { go(t.tab); } } }, h("span", null, t.text), h("span", { "aria-hidden": "true" }, "→"));
-    })));
-
-    var sched = card("Today’s schedule", view.flags.calendar ? view.calendarName : null);
-    if (view.flags.calendar) sched.querySelector(".panel-head").appendChild(pill(view.live.calendar));
-    if (!view.flags.calendar) sched.appendChild(empty("Connect your calendar to see today’s meetings and events.", "Connect calendar", "connections"));
-    else if (!view.todayEvents.length) sched.appendChild(h("p", { class: "muted" }, "Nothing in your calendar today."));
-    else sched.appendChild(eventList(view.todayEvents, false));
-    root.appendChild(sched);
+    root.appendChild(agendaCard());
+    root.appendChild(dailyOverviewCard());
+    if (view.forward) root.appendChild(forwardCard());
+    root.appendChild(agentActivityCard());
 
     root.appendChild(REAL ? tasksCardReal() : tasksCardDemo());
-    root.appendChild(REAL ? targetsCardReal() : targetsCardDemo());
+    if (!view.forward) root.appendChild(REAL ? targetsCardReal() : targetsCardDemo());
     return root;
   }
 
+  function agendaCard() {
+    var sched = card("Today’s agenda", view.flags.calendar ? view.calendarName : null);
+    if (view.flags.calendar) sched.querySelector(".panel-head").appendChild(pill(view.live.calendar));
+    if (!view.flags.calendar) {
+      sched.appendChild(empty("Connect your calendar to see today’s meetings and events, with times, places and travel hints.", "Connect calendar", "connections"));
+      return sched;
+    }
+    if (!view.todayEvents.length) {
+      sched.appendChild(h("p", { class: "muted" }, "Nothing in your calendar today."));
+      return sched;
+    }
+    var rows = (view.agenda && view.agenda.rows) || [];
+    sched.appendChild(h("ul", { class: "agenda-list" }, rows.map(function (row) {
+      if (row.type === "gap" || row.type === "travel") return h("li", { class: "agenda-note is-" + row.type }, row.label);
+      var e = row.event, pl = row.place || {};
+      var tagged = placeById(state.eventPlaces && e.id ? state.eventPlaces[e.id] : null);
+      var tagger = null;
+      if (state.places && state.places.length && e.id) {
+        var sel = placeSelect(state.eventPlaces && state.eventPlaces[e.id] || "", { "aria-label": "Tag a place for " + e.title });
+        sel.addEventListener("change", function () {
+          state.eventPlaces = state.eventPlaces || {};
+          if (sel.value) state.eventPlaces[e.id] = sel.value; else delete state.eventPlaces[e.id];
+          save(); draw();
+        });
+        tagger = h("div", { class: "event-place" }, h("span", { class: "muted" }, "Place"), sel);
+      }
+      var where = pl.name || (e.kind === "deadline" ? "Deadline" : "");
+      var loc = where ? h("small", { class: "agenda-place" }, where, pl.maps ? h("a", { href: pl.maps, target: "_blank", rel: "noopener", class: "maps-link" }, " Map ↗") : null) : null;
+      return h("li", { class: "event kind-" + e.kind + (row.isNext ? " is-next" : "") },
+        h("div", { class: "event-time" }, e.allDay ? "All day" : e.kind === "deadline" ? "Due" : E.time12(e.start), !e.allDay && e.kind !== "deadline" && e.end !== e.start ? h("small", null, "to " + E.time12(e.end)) : null, row.highlight ? h("span", { class: "next-up" }, row.highlight) : null),
+        h("div", null, h("strong", null, e.title), loc, tagger));
+    })));
+    return sched;
+  }
+
+  function dailyOverviewCard() {
+    var prefs = view.overviewPrefs || {};
+    var cats = categoryModel();
+    var brief = card("Daily overview", "Today");
+    var line = (view.dailyOverview && view.dailyOverview.summary) || (view.overview && view.overview.body) || "";
+    brief.appendChild(h("p", { class: "overview-body" }, line));
+    var cards = [];
+    if (prefs.showReply !== false) cards.push({ key: "reply", label: "Needs a reply", tone: "attention", data: cats.reply });
+    if (prefs.showInvoices !== false) cards.push({ key: "invoices", label: "Invoices and payments", tone: "money", data: cats.invoices });
+    if (prefs.showBookings !== false) cards.push({ key: "bookings", label: "Bookings / appointments", tone: "calendar", data: cats.bookings });
+    if (prefs.showNewsletters !== false) cards.push({ key: "newsletters", label: "Newsletters filed", tone: "quiet", data: cats.newsletters });
+    if (cards.length) {
+      brief.appendChild(h("div", { class: "overview-grid" }, cards.map(function (c) {
+        var n = (c.data && c.data.count) || 0;
+        return h("button", { class: "overview-card dash-card tone-" + c.tone, type: "button", on: { click: function () { openInbox(c.key); } } },
+          h("header", null, h("h3", null, c.label), h("span", { class: "count-pill" }, String(n))),
+          h("p", null, (c.data && c.data.blurb) || ""));
+      })));
+    }
+    return brief;
+  }
+
+  function forwardCard() {
+    var f = view.forward;
+    var wrap = card("Move the business forward");
+    if (!f.pipeline.length && !f.upcoming.length && !f.content.length && !f.actions.length && !(view.targets && view.targets.length) && !(state.userTargets && state.userTargets.length) && !(f.money && (f.money.balance != null || (f.money.invoiceEmails && f.money.invoiceEmails.length) || f.money.invoices))) {
+      wrap.appendChild(h("p", { class: "muted" }, "Nothing to push forward just now. Add a goal so you’ve got something to work towards."));
+      wrap.appendChild(h("button", { class: "btn btn-primary btn-small", type: "button", on: { click: function () { ui.addingTarget = true; draw(); var el = document.getElementById("new-target"); if (el) el.focus(); } } }, "Add a goal"));
+      wrap.appendChild(targetsCardReal());
+      return wrap;
+    }
+    if (f.actions && f.actions.length) {
+      wrap.appendChild(h("h3", { class: "forward-sub" }, "Suggested next"));
+      wrap.appendChild(h("ul", { class: "forward-actions" }, f.actions.map(function (a) {
+        var title = h("input", { type: "text", value: a.title, "aria-label": "Edit action", class: "action-edit" });
+        title.addEventListener("change", function () { state.actionEdits = state.actionEdits || {}; state.actionEdits[a.id] = title.value.trim() || a.title; save(); });
+        return h("li", null, title, a.detail ? h("small", null, a.detail) : null,
+          h("div", { class: "add-row" },
+            a.tab ? h("button", { class: "link-btn", type: "button", on: { click: function () { go(a.tab); } } }, "Open") : null,
+            h("button", { class: "link-btn", type: "button", on: { click: function () { state.dismissedActions = (state.dismissedActions || []).concat([a.id]); save(); draw(); } } }, "Dismiss")));
+      })));
+    }
+    wrap.appendChild(h("h3", { class: "forward-sub" }, f.labels.pipeline));
+    if (!f.pipeline.length) wrap.appendChild(h("p", { class: "muted" }, f.motor ? "No sponsor or partner threads waiting just now." : "No one is waiting on a reply just now."));
+    else wrap.appendChild(h("ul", { class: "forward-list" }, f.pipeline.map(function (p) {
+      return h("li", { class: "forward-row" },
+        h("div", null, h("strong", null, p.from + (p.org ? " (" + p.org + ")" : "")), h("small", null, p.subject + (p.quiet ? " · gone quiet for " + p.days + " days" : " · awaiting a reply"))),
+        h("button", { class: "btn btn-secondary btn-small", type: "button", on: { click: function () { openInbox("reply"); } } }, "View"));
+    })));
+    wrap.appendChild(h("h3", { class: "forward-sub" }, f.labels.events));
+    if (!f.upcoming.length) wrap.appendChild(h("p", { class: "muted" }, f.motor ? "No tests, races or travel in the diary for the next two weeks." : "Nothing coming up in the diary."));
+    else wrap.appendChild(h("ul", { class: "forward-list" }, f.upcoming.map(function (e) {
+      var items = f.motor
+        ? ["Confirm travel and arrival", "Pack kit and paperwork", "Check tyres and run plan", "Plan a short post for after the event"]
+        : ["Confirm the time and place", "Gather what you need", "Add a reminder if you want one"];
+      return h("li", { class: "forward-row" },
+        h("div", null, h("strong", null, e.title), h("small", null, E.whenLabel(e.date, view.today) + (e.start && !e.allDay ? " · " + E.time12(e.start) + (e.end && e.end !== e.start ? "–" + E.time12(e.end) : "") : "") + (e.place ? " · " + e.place : "")),
+          h("ul", { class: "prep-list" }, items.map(function (t) { return h("li", null, t); }))));
+    })));
+    wrap.appendChild(h("h3", { class: "forward-sub" }, f.labels.money));
+    var moneyBits = [];
+    if (f.money && f.money.balance != null) moneyBits.push("Statement balance: " + E.fmtMoney(f.money.balance) + ".");
+    if (f.money && f.money.trend) moneyBits.push(f.money.trend);
+    if (f.money && f.money.invoices && f.money.invoices.overdueCount) moneyBits.push(f.money.invoices.overdueCount + " overdue (" + E.fmtMoney(f.money.invoices.overdueTotal) + ").");
+    if (f.money && f.money.invoiceEmails && f.money.invoiceEmails.length) moneyBits.push(f.money.invoiceEmails.length + " invoice or payment " + (f.money.invoiceEmails.length === 1 ? "message" : "messages") + " in your mail.");
+    wrap.appendChild(h("p", { class: "muted" }, moneyBits.length ? moneyBits.join(" ") : "Connect your bank or keep invoice emails in view — amounts are only shown when they come from your own data."));
+    wrap.appendChild(h("h3", { class: "forward-sub" }, f.labels.content));
+    if (!f.content.length) wrap.appendChild(h("p", { class: "muted" }, f.motor ? "When a test or race has just happened, a recap for sponsors and socials will show up here." : "Follow-up ideas will show up here after events in your diary."));
+    else wrap.appendChild(h("ul", { class: "forward-list" }, f.content.map(function (c) {
+      return h("li", { class: "forward-row" }, h("div", null, h("strong", null, c.title), h("small", null, c.detail)));
+    })));
+    wrap.appendChild(h("h3", { class: "forward-sub" }, f.labels.goals));
+    wrap.appendChild(REAL ? targetsCardReal() : targetsCardDemo());
+    return wrap;
+  }
+
+  function agentActivityCard() {
+    var act = card("Recent activity");
+    var rows = view.agentActivity || [];
+    if (!rows.length) {
+      act.appendChild(h("p", { class: "muted" }, "When a draft is written, a newsletter is filed or today’s overview is prepared, it will show up here."));
+      return act;
+    }
+    act.appendChild(h("ol", { class: "activity-list agent-activity" }, rows.map(function (a) {
+      return h("li", null, h("time", null, activityWhen(a)), h("div", null, h("strong", null, a.title), a.detail ? h("small", null, a.detail) : null));
+    })));
+    return act;
+  }
 
   // ---------- tasks and targets ----------
   function toggleDone(t, checked) {
@@ -331,47 +517,112 @@
   // ---------- Inbox ----------
   function pInbox() {
     var root = h("div");
+    var filter = ui.inboxFilter || "reply";
     root.appendChild(pageHead("Inbox", view.flags.mail ? view.mailName + (view.liveAccounts.mail ? " (" + view.liveAccounts.mail + ")" : "") + " · replies waiting for you" : "Emails that need a reply, with drafts ready"));
     if (view.flags.mail) root.querySelector(".app-head").appendChild(pill(view.live.mail));
     if (!view.flags.mail) { root.appendChild(card(null, null, empty("Connect your email to see which messages need a reply — we’ll have a draft ready for each one. Nothing is ever sent without your approval.", "Connect email", "connections"))); return root; }
-    root.appendChild(h("p", { class: "overview-intro" }, "We looked through " + (view.otherMessages + view.emailTotal) + " recent " + (view.live.mail ? "real " : "") + "messages. " + (view.emails.length ? view.emails.length + " need a reply from you; the rest are handled or don’t need you." : "None need a reply — you’re all caught up.")));
-    if (!view.emails.length) { root.appendChild(card(null, null, empty("All caught up. New emails that need a reply will appear here."))); return root; }
-    view.emails.forEach(function (m) { root.appendChild(emailCard(m)); });
+    var scanned = (view.otherMessages + view.emailTotal + (view.filed ? view.filed.length : 0));
+    root.appendChild(h("p", { class: "overview-intro" }, "We looked through " + scanned + " recent " + (view.live.mail ? "real " : "") + "messages. " + ((view.emails || []).filter(function (e) { return !e.noReply; }).length ? (view.emails.filter(function (e) { return !e.noReply; }).length + " need a reply from you.") : "None need a reply — you’re all caught up.")));
+    root.appendChild(h("p", { class: "j-fine privacy-line" }, "Email text is used only to write a draft, and is never stored."));
+    var filters = [
+      { id: "reply", label: "Needs a reply" },
+      { id: "invoices", label: "Invoices and payments" },
+      { id: "bookings", label: "Bookings" },
+      { id: "newsletters", label: "Newsletters" },
+      { id: "all", label: "All" }
+    ];
+    root.appendChild(h("div", { class: "inbox-filters", role: "tablist", "aria-label": "Inbox filter" }, filters.map(function (f) {
+      return h("button", { class: "draft-tab" + (filter === f.id ? " is-on" : ""), type: "button", role: "tab", "aria-selected": filter === f.id ? "true" : "false", on: { click: function () { ui.inboxFilter = f.id; draw(); } } }, f.label);
+    })));
+    var list = inboxList(filter);
+    if (!list.length) {
+      var emptyMsg = filter === "newsletters" ? "No newsletters have been filed from the recent mail." : filter === "invoices" ? "No invoice or payment messages in the recent mail." : filter === "bookings" ? "No booking or appointment messages." : filter === "all" ? "Nothing in the recent mail to show." : "All caught up. New emails that need a reply will appear here.";
+      root.appendChild(card(null, null, empty(emptyMsg)));
+      return root;
+    }
+    list.forEach(function (m) { root.appendChild(emailCard(m)); });
     return root;
+  }
+  function inboxList(filter) {
+    var need = (view.emails || []).filter(function (e) { return !e.noReply; });
+    var filed = view.filed || [];
+    var all = need.concat(filed, (view.emails || []).filter(function (e) { return e.noReply; }));
+    var seen = {};
+    all = all.filter(function (m) { if (seen[m.id]) return false; seen[m.id] = 1; return true; });
+    if (filter === "all") return all;
+    if (filter === "reply") return need;
+    if (filter === "newsletters") return all.filter(function (m) { return E.classifyEmail(m) === "newsletter" || m.noReply && E.classifyEmail(m) !== "invoice"; });
+    if (filter === "invoices") return all.filter(function (m) { return E.classifyEmail(m) === "invoice"; });
+    if (filter === "bookings") return all.filter(function (m) { return E.classifyEmail(m) === "booking"; });
+    return need;
+  }
+  function draftCtx() {
+    return { owner: state.account && state.account.name || "", business: state.business && state.business.name || "", type: state.business && state.business.type || "", industry: state.business && state.business.industry || "" };
   }
   function emailCard(m) {
     var di = ui.draft[m.id] || 0;
-    var body = m.draftBody(di);
+    if (!m.noReply && !(m.drafts && m.drafts.length)) m.drafts = E.templateDrafts(m, draftCtx().owner, draftCtx().business, ui.tone[m.id] || "friendly");
+    var noReply = !!m.noReply;
+    var body = m.draftBody ? m.draftBody(di) : (m.drafts && m.drafts[di] && m.drafts[di].body) || "";
+    var el = h("article", { class: "dash-card app-card email-card" },
+      h("header", null, h("div", null, h("strong", null, m.from), h("small", null, (m.org ? m.org + " · " : "") + m.when)), h("span", { class: "count-pill" }, noReply ? "No reply needed" : "Needs reply")),
+      h("h3", { class: "email-subject" }, m.subject),
+      h("p", { class: "muted" }, m.snippet));
+    if (noReply) {
+      el.appendChild(h("p", { class: "j-fine" }, m.noReplyReason || "This looks like a newsletter, receipt or notification, so no draft was written."));
+      el.appendChild(h("div", { class: "draft-actions" },
+        h("button", { class: "btn btn-ghost btn-small", type: "button", on: { click: function () { state.replied.push(m.id); save(); draw(); } } }, "Clear")));
+      return el;
+    }
     var ta = h("textarea", { class: "draft-text", rows: "8", "aria-label": "Draft reply to " + m.from });
     ta.value = body;
     ta.addEventListener("input", function () { state.edits[m.id + ":" + di] = ta.value; save(); });
-    var el = h("article", { class: "dash-card app-card email-card" },
-      h("header", null, h("div", null, h("strong", null, m.from), h("small", null, m.org + " · " + m.when)), h("span", { class: "count-pill" }, "Needs reply")),
-      h("h3", { class: "email-subject" }, m.subject),
-      h("p", { class: "muted" }, m.snippet),
-      h("div", { class: "draft-tabs", role: "tablist", "aria-label": "Draft replies" }, m.drafts.map(function (d, i) {
+    if (m.drafts && m.drafts.length > 1) {
+      el.appendChild(h("div", { class: "draft-tabs", role: "tablist", "aria-label": "Draft replies" }, m.drafts.map(function (d, i) {
         return h("button", { class: "draft-tab" + (i === di ? " is-on" : ""), type: "button", role: "tab", "aria-selected": i === di ? "true" : "false", on: { click: function () { ui.draft[m.id] = i; draw(); } } }, d.label);
-      })),
-      ta,
-      h("div", { class: "draft-actions" },
-        h("button", { class: "btn btn-primary btn-small", type: "button", on: { click: function () {
-          var url = "mailto:?subject=" + encodeURIComponent("Re: " + m.subject) + "&body=" + encodeURIComponent(ta.value);
-          window.location.href = url;
-        } } }, "Open in email"),
-        m.live && m.meta ? h("button", { class: "btn btn-secondary btn-small", type: "button", disabled: ui.saved[m.id] ? true : null, on: { click: function (ev) {
-          var b = ev.currentTarget; b.disabled = true; b.textContent = "Saving…"; ui.saveErr[m.id] = "";
-          L.saveDraft(m, ta.value, state.connected).then(function (r) { ui.saved[m.id] = r; draw(); }).catch(function (err) { ui.saveErr[m.id] = err.message; if (err.reauth) { /* shown by banner on next refresh */ } draw(); });
-        } } }, ui.saved[m.id] ? "Saved ✓" : "Save as draft in " + ({ google: "Gmail", microsoft: "Outlook", imap: "your mailbox" }[m.meta.provider])) : null,
-        h("button", { class: "btn btn-secondary btn-small", type: "button", on: { click: function (ev) {
-          var b = ev.currentTarget;
-          S.copyText(ta.value).then(function () { b.textContent = "Copied ✓"; setTimeout(function () { b.textContent = "Copy"; }, 1500); });
-        } } }, "Copy"),
-        h("button", { class: "btn btn-ghost btn-small", type: "button", on: { click: function () {
-          state.replied.push(m.id); if (state.doneTasks.indexOf("reply:" + m.id) === -1) state.doneTasks.push("reply:" + m.id); save(); draw();
-        } } }, "Mark as replied")),
-      ui.saveErr[m.id] ? h("p", { class: "j-error j-block", role: "alert" }, ui.saveErr[m.id]) : null,
-      ui.saved[m.id] ? h("p", { class: "j-fine", role: "status" }, "Saved to " + ui.saved[m.id].where + ". Nothing has been sent — open it there to review and send." + (ui.saved[m.id].url ? " " : ""), ui.saved[m.id].url ? h("a", { href: ui.saved[m.id].url, target: "_blank", rel: "noopener" }, "Open drafts ↗") : null) : null,
-      h("p", { class: "j-fine" }, "You can edit the draft above. Nothing is sent from here — " + (m.live ? "drafts are saved to your mailbox for you to review, and " : "") + "“Open in email” hands it to your own mail app."));
+      })));
+    }
+    var tone = ui.tone[m.id] || "friendly";
+    var toneSel = h("select", { class: "tone-select", "aria-label": "Draft tone" },
+      ["friendly", "formal", "short"].map(function (t) {
+        return h("option", { value: t, selected: tone === t ? "selected" : null }, t.charAt(0).toUpperCase() + t.slice(1));
+      })
+    );
+    toneSel.value = tone;
+    toneSel.addEventListener("change", function () { ui.tone[m.id] = toneSel.value; });
+    el.appendChild(h("div", { class: "draft-tools" },
+      h("label", { class: "tone-label" }, "Tone ", toneSel),
+      h("button", { class: "btn btn-secondary btn-small", type: "button", disabled: ui.rewriting[m.id] ? true : null, on: { click: function (ev) {
+        var b = ev.currentTarget;
+        ui.rewriting[m.id] = true; b.disabled = true; b.textContent = "Rewriting…";
+        var prev = ta.value;
+        (L && L.rewriteDraft ? L.rewriteDraft(m, draftCtx(), { tone: ui.tone[m.id] || toneSel.value, previous: prev }) : Promise.resolve({ drafts: E.templateDrafts(m, draftCtx().owner, draftCtx().business, ui.tone[m.id] || toneSel.value) }))
+          .then(function (j) {
+            var next = j && j.drafts && j.drafts[0] && j.drafts[0].body;
+            if (next) { state.edits[m.id + ":" + di] = next; if (m.drafts && m.drafts[di]) m.drafts[di].body = next; }
+            ui.rewriting[m.id] = false; save(); draw();
+          }).catch(function () { ui.rewriting[m.id] = false; draw(); });
+      } } }, ui.rewriting[m.id] ? "Rewriting…" : "Rewrite")));
+    el.appendChild(ta);
+    el.appendChild(h("div", { class: "draft-actions" },
+      h("button", { class: "btn btn-primary btn-small", type: "button", on: { click: function () {
+        var url = "mailto:?subject=" + encodeURIComponent("Re: " + m.subject) + "&body=" + encodeURIComponent(ta.value);
+        window.location.href = url;
+      } } }, "Open in email"),
+      m.live && m.meta ? h("button", { class: "btn btn-secondary btn-small", type: "button", disabled: ui.saved[m.id] ? true : null, on: { click: function (ev) {
+        var b = ev.currentTarget; b.disabled = true; b.textContent = "Saving…"; ui.saveErr[m.id] = "";
+        L.saveDraft(m, ta.value, state.connected).then(function (r) { ui.saved[m.id] = r; draw(); }).catch(function (err) { ui.saveErr[m.id] = err.message; if (err.reauth) { /* shown by banner on next refresh */ } draw(); });
+      } } }, ui.saved[m.id] ? "Saved ✓" : "Save as draft in " + ({ google: "Gmail", microsoft: "Outlook", imap: "your mailbox" }[m.meta.provider])) : null,
+      h("button", { class: "btn btn-secondary btn-small", type: "button", on: { click: function (ev) {
+        var b = ev.currentTarget;
+        S.copyText(ta.value).then(function () { b.textContent = "Copied ✓"; setTimeout(function () { b.textContent = "Copy"; }, 1500); });
+      } } }, "Copy"),
+      h("button", { class: "btn btn-ghost btn-small", type: "button", on: { click: function () {
+        state.replied.push(m.id); if (state.doneTasks.indexOf("reply:" + m.id) === -1) state.doneTasks.push("reply:" + m.id); save(); draw();
+      } } }, "Mark as replied")));
+    if (ui.saveErr[m.id]) el.appendChild(h("p", { class: "j-error j-block", role: "alert" }, ui.saveErr[m.id]));
+    if (ui.saved[m.id]) el.appendChild(h("p", { class: "j-fine", role: "status" }, "Saved to " + ui.saved[m.id].where + ". Nothing has been sent — open it there to review and send." + (ui.saved[m.id].url ? " " : ""), ui.saved[m.id].url ? h("a", { href: ui.saved[m.id].url, target: "_blank", rel: "noopener" }, "Open drafts ↗") : null));
+    el.appendChild(h("p", { class: "j-fine" }, "You can edit the draft above. Nothing is sent from here — " + (m.live ? "drafts are saved to your mailbox for you to review, and " : "") + "“Open in email” hands it to your own mail app."));
     return el;
   }
 
@@ -486,6 +737,20 @@
     if (view.setupLeft) {
       root.appendChild(h("button", { class: "app-nudge", type: "button", on: { click: function () { window.location.href = "start.html#connect"; } } }, h("strong", null, "Finish setup (" + view.setupLeft + " left)"), h("span", null, "Continue where you left off →")));
     }
+    var linked = Object.keys(state.connected || {});
+    if (linked.length) {
+      var acc = card("Connected accounts", String(linked.length));
+      acc.appendChild(h("ul", { class: "email-list connected-accounts" }, linked.map(function (key) {
+        var conn = state.connected[key];
+        var item = E.ITEM_BY_KEY[key] || { title: key };
+        var who = (view.liveAccounts && view.liveAccounts[key]) || conn.detail || "";
+        var status = conn.route === "local" ? "Kept on this device" : (conn.live ? "Connected" : "Connected");
+        return h("li", { class: "conn-row is-on" },
+          h("span", { class: "conn-badge", "aria-hidden": "true" }, (conn.providerName || item.title).charAt(0)),
+          h("div", { class: "conn-main" }, h("strong", null, conn.providerName || item.title), h("small", null, (who ? who + " · " : "") + status)));
+      })));
+      root.appendChild(acc);
+    }
     E.GROUPS.forEach(function (g) {
       var rows = E.connectionRows(state).filter(function (r) { return r.item.group === g && (!REAL || REAL_KEYS.indexOf(r.item.key) !== -1); });
       if (!rows.length) return;
@@ -519,6 +784,26 @@
     var info = S.currentInfo && S.currentInfo() || { name: state.business && state.business.name };
     var root = h("div");
     root.appendChild(pageHead("Settings", info && info.name ? info.name : "This dashboard"));
+
+    var prefs = state.overviewPrefs || { time: "07:00", showReply: true, showInvoices: true, showBookings: true, showNewsletters: true };
+    state.overviewPrefs = prefs;
+    var timeIn = h("input", { type: "time", id: "overview-time", value: prefs.time || "07:00", "aria-label": "Daily overview time" });
+    timeIn.addEventListener("change", function () { prefs.time = timeIn.value || "07:00"; save(); });
+    function alertRow(key, label) {
+      var box = h("input", { type: "checkbox", id: "alert-" + key });
+      box.checked = prefs[key] !== false;
+      box.addEventListener("change", function () { prefs[key] = box.checked; save(); draw(); });
+      return h("div", { class: "checkbox-row" }, box, h("label", { for: "alert-" + key }, label));
+    }
+    var ov = card("Daily overview");
+    ov.appendChild(h("p", { class: "muted" }, "The overview is prepared when you open Today. Choose a time that suits your morning — we’ll aim to have it ready if you open the app around then."));
+    ov.appendChild(h("div", { class: "settings-grid" },
+      h("label", { for: "overview-time" }, "Daily overview time"), timeIn,
+      alertRow("showReply", "Show alerts for messages that need a reply"),
+      alertRow("showInvoices", "Show alerts for invoices and payments"),
+      alertRow("showBookings", "Show alerts for bookings and appointments"),
+      alertRow("showNewsletters", "Show alerts for filed newsletters")));
+    root.appendChild(ov);
 
     var placesCard = card("Places", (state.places || []).length ? String((state.places || []).length) : null);
     placesCard.appendChild(h("p", { class: "muted" }, "Locations this dashboard uses — a workshop, an office, a track. You can tag tasks and calendar events to one."));
