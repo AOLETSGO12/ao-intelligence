@@ -604,7 +604,7 @@
     var body;
     if (rt === "stripe") body = api("/stripe/connect", { key: values.key });
     else if (rt === "shopify") body = (values.clientId || values.clientSecret || values.token) ? api("/shopify/connect", { shop: session.detail, token: values.token, clientId: values.clientId, clientSecret: values.clientSecret }) : Promise.reject(new Error("Please paste the app’s Client ID and Client secret, or an Admin API access token."));
-    else if (rt === "imap") body = api("/imap/connect", { address: values.address || session.detail, password: values.password, host: values.host });
+    else if (rt === "imap") body = api("/imap/connect", { address: values.address || session.detail, password: values.password, host: values.host }, 45000);
     else if (rt === "calendly") body = api("/calendly/connect", { token: values.token });
     else if (rt === "caldav") {
       var u = values.url || (session.providerId === "caldav" ? session.detail : "");

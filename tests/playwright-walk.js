@@ -50,8 +50,14 @@ async function run(engineName, engine, label, ctxOpts) {
     const panel = (await p.locator('#real-fallback').count()) ? p.locator('#real-fallback') : p.locator('#real-panel');
     const connect = panel.locator('button.btn-primary').filter({ visible: true }).first();
     await tap(connect);
-    await p.waitForFunction(re => new RegExp(re).test(document.body.innerText), expectRe.source, { timeout: 25000 }).catch(() => {});
-    const tt = await txt(); const mine = apiReqs.slice(before).join(', ');
+    await p.waitForFunction(re => /didn’t accept those details|didn’t answer in time|couldn’t open a secure connection/.test(document.body.innerText), null, { timeout: 50000 }).catch(() => {});
+    let tt = await txt(); let mine = apiReqs.slice(before).join(', ');
+    // Some providers (BT) occasionally time out; one retry is enough.
+    if (PROXY_LIVE && /POST \/imap\/connect 504/.test(mine) && !expectRe.test(tt)) {
+      await tap(panel.locator('button.btn-primary').filter({ visible: true }).first());
+      await p.waitForFunction(re => new RegExp(re).test(document.body.innerText), expectRe.source, { timeout: 50000 }).catch(() => {});
+      tt = await txt(); mine = apiReqs.slice(before).join(', ');
+    }
     ok(expectRe.test(tt) && (!PROXY_LIVE || /POST \/imap\/connect 401/.test(mine)), label + ' → friendly wrong-password message (' + (mine || 'no request') + ')');
   };
   await tap(btn('Gmail (Google)'));
