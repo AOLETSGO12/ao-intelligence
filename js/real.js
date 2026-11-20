@@ -224,33 +224,108 @@
   function clearCalendar() { try { root.localStorage.removeItem(CAL_KEY); } catch (e) { /* ignore */ } }
 
   // ------------------------------------------------------------------ guides
-  // Email and calendar connect by provider sign-in only (Google or Microsoft). Other providers are "coming soon":
-  // people can tell us they need one, and the request is kept on this device.
+  // Email and calendar providers. Google and Microsoft use their own sign-in when it's switched on; every other
+  // provider connects with an address + app password (or password) through the AO service, with the server pre-filled.
+  var APPLE = "https://account.apple.com/account/manage";
   var MAIL = [
-    { id: "gmail", name: "Gmail (Google)", oauth: "google" },
-    { id: "outlook", name: "Outlook, Hotmail or Microsoft 365", oauth: "microsoft" },
-    { id: "icloud-mail", name: "iCloud Mail", soon: true },
-    { id: "yahoo", name: "Yahoo Mail", soon: true },
-    { id: "aol", name: "AOL Mail", soon: true },
-    { id: "zoho-mail", name: "Zoho Mail", soon: true },
-    { id: "fastmail", name: "Fastmail", soon: true },
-    { id: "other-mail", name: "Another email provider", soon: true, other: true },
+    { id: "gmail", name: "Gmail (Google)", oauth: "google", host: "imap.gmail.com",
+      steps: [
+        { t: "Turn on 2-Step Verification for your Google account (skip if it’s already on).", href: "https://myaccount.google.com/signinoptions/twosv", link: "Open 2-Step Verification" },
+        { t: "Create an app password called “AO Intelligence”. Google shows a 16-letter code.", href: "https://myaccount.google.com/apppasswords", link: "Open App passwords" },
+        { t: "Paste your Gmail address and that code below. Spaces in the code don’t matter." } ],
+      note: "School or work Google accounts may have app passwords switched off by their administrator." },
+    { id: "outlook", name: "Outlook, Hotmail or Microsoft 365", oauth: "microsoft", host: "outlook.office365.com",
+      note: "Microsoft no longer allows passwords or app passwords for Outlook.com and Microsoft 365 mail, so Outlook mail connects with Microsoft’s own sign-in." },
+    { id: "icloud-mail", name: "iCloud Mail and Calendar", host: "imap.mail.me.com", calendar: "icloud-calendar", both: true,
+      steps: [
+        { t: "Sign in to your Apple Account and open Sign-In and Security → App-Specific Passwords.", href: APPLE, link: "Open Apple Account" },
+        { t: "Press “+”, name it “AO Intelligence” and copy the password (it looks like abcd-efgh-ijkl-mnop)." },
+        { t: "Enter your iCloud address (@icloud.com, @me.com or @mac.com) and that password. One form connects your mail and your calendar." } ] },
+    { id: "yahoo", name: "Yahoo Mail", host: "imap.mail.yahoo.com", calendar: "yahoo-calendar",
+      steps: [
+        { t: "Open Yahoo Account security and choose “Generate app password”.", href: "https://login.yahoo.com/account/security", link: "Open Yahoo security" },
+        { t: "Name it “AO Intelligence” and copy the password it shows." },
+        { t: "Paste your Yahoo address and that password below." } ] },
+    { id: "aol", name: "AOL Mail", host: "imap.aol.com",
+      steps: [
+        { t: "Open AOL account security and generate an app password.", href: "https://login.aol.com/account/security", link: "Open AOL security" },
+        { t: "Name it “AO Intelligence” and copy the password." },
+        { t: "Paste your AOL address and that password below." } ] },
+    { id: "zoho-mail", name: "Zoho Mail", host: "imap.zoho.com", hostAlt: "imap.zoho.eu",
+      steps: [
+        { t: "In Zoho Mail settings, switch on IMAP access (Settings → Mail Accounts → IMAP Access).", href: "https://mail.zoho.com/zm/#settings/all/mailaccounts", link: "Open Zoho Mail settings" },
+        { t: "Create an application-specific password.", href: "https://accounts.zoho.com/home#security/app_password", link: "Open Zoho security" },
+        { t: "Paste your Zoho address and that password. If your account is in Europe the server is imap.zoho.eu." } ] },
+    { id: "fastmail", name: "Fastmail", host: "imap.fastmail.com", calendar: "fastmail-calendar",
+      steps: [
+        { t: "Open Fastmail Settings → Privacy & Security → Integrations and choose “New app password”.", href: "https://app.fastmail.com/settings/security/integrations", link: "Open Fastmail" },
+        { t: "Give it Mail (IMAP) access, name it “AO Intelligence” and copy the password." },
+        { t: "Paste your Fastmail address and that password below." } ] },
+    { id: "gmx", name: "GMX", host: "imap.gmx.com",
+      steps: [
+        { t: "In GMX go to Email → Settings → POP3 & IMAP and tick “Enable access to this account via POP3 and IMAP”, then Save.", href: "https://www.gmx.com", link: "Open GMX" },
+        { t: "Using two-step verification? Create an application-specific password under your profile → Security Options. Otherwise your normal password works." },
+        { t: "Paste your GMX address and that password. Addresses ending .de, .at, .ch or .net use the server imap.gmx.net." } ] },
+    { id: "bt", name: "BT Mail", host: "mail.btinternet.com",
+      steps: [
+        { t: "Check you can sign in to BT Mail on the web with your BT email address and password.", href: "https://www.bt.com/mail", link: "Open BT Mail" },
+        { t: "Use your full address (for example name@btinternet.com) and your normal BT Mail password. BT doesn’t use app passwords." },
+        { t: "Paste them below. If it’s refused, reset your password with BT and try again." } ] },
+    { id: "sky", name: "Sky Mail", host: "imap.mail.yahoo.com",
+      steps: [
+        { t: "Sky Mail is run by Yahoo. Open Sky’s “Manage apps” page and generate an app password.", href: "https://www.sky.com/sky-yahoo-mail/manage-apps", link: "Open Sky Mail app passwords" },
+        { t: "Name it “AO Intelligence” and copy the 16-character password." },
+        { t: "Paste your Sky address (name@sky.com) and that password below." } ] },
+    { id: "virgin", name: "Virgin Media", host: "imap.virginmedia.com",
+      steps: [
+        { t: "Use your full Virgin Media email address and your Virgin Media email password.", href: "https://www.virginmedia.com/help/email", link: "Virgin Media email help" },
+        { t: "Paste them below. If it’s refused, reset the email password in your Virgin Media account and try again." } ] },
+    { id: "imap", name: "Another provider", host: "", other: true,
+      steps: [
+        { t: "Type your email address and press “Find my settings” — we’ll look up your provider’s mail server." },
+        { t: "If your provider offers “app passwords”, create one called “AO Intelligence” and use it. Otherwise use your normal password." },
+        { t: "If we can’t find the server, type it in (it looks like imap.example.com — your provider’s help page lists it). We use the secure port 993." } ] },
   ];
   var CAL = [
-    { id: "google-calendar", name: "Google Calendar", oauth: "google" },
-    { id: "outlook-calendar", name: "Outlook or Microsoft 365 calendar", oauth: "microsoft" },
-    { id: "icloud-calendar", name: "iCloud Calendar", soon: true },
-    { id: "zoho-calendar", name: "Zoho Calendar", soon: true },
-    { id: "other-calendar", name: "Another calendar", soon: true, other: true },
+    { id: "google-calendar", name: "Google Calendar", oauth: "google", kind: "ics",
+      steps: [
+        { t: "On a computer, open Google Calendar settings and click the calendar you want under “Settings for my calendars”.", href: "https://calendar.google.com/calendar/u/0/r/settings", link: "Open Calendar settings" },
+        { t: "Scroll to “Integrate calendar” and copy “Secret address in iCal format” (a long link ending .ics)." },
+        { t: "Paste it below. Keep it private — anyone with the link can see your calendar. You can reset it in the same place." } ],
+      note: "The Google Calendar phone app can’t show this link, so use a computer. Some work or school accounts hide it." },
+    { id: "outlook-calendar", name: "Outlook or Microsoft 365 calendar", oauth: "microsoft", kind: "ics",
+      steps: [
+        { t: "Open Outlook calendar settings → Shared calendars → “Publish a calendar”.", href: "https://outlook.live.com/calendar/0/options/calendar/SharedCalendars", link: "Open Outlook.com settings" },
+        { t: "Pick your calendar, choose “Can view all details”, and press Publish." },
+        { t: "Copy the ICS link (not the HTML one) and paste it below. For a work account use outlook.office.com instead — your administrator may have turned publishing off." } ] },
+    { id: "icloud-calendar", name: "iCloud Calendar and Mail", kind: "caldav", host: "imap.mail.me.com", mail: "icloud-mail", both: true, url: "https://caldav.icloud.com/",
+      steps: [
+        { t: "Sign in to your Apple Account and open Sign-In and Security → App-Specific Passwords.", href: APPLE, link: "Open Apple Account" },
+        { t: "Press “+”, name it “AO Intelligence” and copy the password (abcd-efgh-ijkl-mnop)." },
+        { t: "Enter your iCloud address and that password. One form connects your calendar and your mail." } ] },
+    { id: "yahoo-calendar", name: "Yahoo Calendar", kind: "caldav", url: "https://caldav.calendar.yahoo.com/",
+      steps: [
+        { t: "Open Yahoo Account security and choose “Generate app password”.", href: "https://login.yahoo.com/account/security", link: "Open Yahoo security" },
+        { t: "Enter your Yahoo address and that password below." } ] },
+    { id: "fastmail-calendar", name: "Fastmail Calendar", kind: "caldav", url: "https://caldav.fastmail.com/dav/",
+      steps: [
+        { t: "In Fastmail go to Settings → Privacy & Security → Integrations → New app password, with Calendars (CalDAV) access.", href: "https://app.fastmail.com/settings/security/integrations", link: "Open Fastmail" },
+        { t: "Enter your Fastmail address and that password below." } ] },
+    { id: "zoho-calendar", name: "Zoho Calendar", kind: "ics",
+      steps: [
+        { t: "In Zoho Calendar, open the calendar’s Share options and copy its private iCal (.ics) link.", href: "https://calendar.zoho.com", link: "Open Zoho Calendar" },
+        { t: "Paste it below." } ] },
+    { id: "ics", name: "Any calendar link (.ics or webcal)", kind: "ics",
+      steps: [ { t: "Most calendars (GMX, BT, Sky, Virgin Media, Nextcloud, …) can publish a private link ending .ics, sometimes called “iCal”, “subscribe” or “webcal”. Copy it and paste it below." } ] },
+    { id: "caldav", name: "Any CalDAV calendar", kind: "caldav", url: "",
+      steps: [ { t: "Enter your calendar server’s CalDAV address, your username and an app password. Examples: iCloud https://caldav.icloud.com · Fastmail https://caldav.fastmail.com/dav/ · Yahoo https://caldav.calendar.yahoo.com/" } ] },
   ];
-  var REQ_KEY = "ao-provider-requests-v1";
-  function requests() { var r = readJson(REQ_KEY); return Array.isArray(r) ? r : []; }
-  function hasRequest(id) { return requests().some(function (x) { return x.id === id; }); }
-  /** Remember "I'd use this" on this device. Returns false if the browser wouldn't save it. */
-  function saveRequest(kind, id, name, note) {
-    var list = requests().filter(function (x) { return x.id !== id; });
-    list.push({ kind: kind, id: id, name: name, note: String(note || "").slice(0, 200), at: new Date().toISOString() });
-    return writeJson(REQ_KEY, list);
+  /** Best-guess IMAP server from an address, for instant pre-fill (the AO service does a fuller lookup). */
+  function guessHost(address) {
+    var d = String(address || "").split("@")[1]; d = d ? d.toLowerCase().trim() : "";
+    var rules = [[/^(gmail|googlemail)\.com$/, "imap.gmail.com"], [/^(icloud|me|mac)\.com$/, "imap.mail.me.com"], [/^(yahoo|ymail|rocketmail)\./, "imap.mail.yahoo.com"], [/^sky\.(com|co\.uk)$/, "imap.mail.yahoo.com"], [/^(btinternet|btopenworld)\.com$/, "mail.btinternet.com"], [/^(virginmedia|ntlworld|blueyonder)\./, "imap.virginmedia.com"], [/^(aol|aim)\.com$/, "imap.aol.com"], [/^gmx\.(net|de|at|ch)$/, "imap.gmx.net"], [/^gmx\./, "imap.gmx.com"], [/^zoho\.eu$/, "imap.zoho.eu"], [/^zoho(mail)?\.com$/, "imap.zoho.com"], [/^(fastmail\.(com|fm))$/, "imap.fastmail.com"]];
+    for (var i = 0; i < rules.length; i++) if (rules[i][0].test(d)) return rules[i][1];
+    return "";
   }
   var BANK_TIPS = {
     "monzo": "Monzo: in the app go to Account → Statements, or sign in at monzo.com and open Statements, then choose Export → CSV.",
@@ -274,6 +349,6 @@
     parseStatement: parseStatement, parseCsv: parseCsv, parseOfx: parseOfx, parseDate: parseDate, parseAmount: parseAmount,
     mergeBank: mergeBank, saveBank: saveBank, localBank: localBank, clearBank: clearBank,
     saveCalendarFile: saveCalendarFile, localCalendar: localCalendar, clearCalendar: clearCalendar, eventsFromIcs: eventsFromIcs,
-    MAIL: MAIL, CAL: CAL, requests: requests, hasRequest: hasRequest, saveRequest: saveRequest, REQ_KEY: REQ_KEY, BANK_TIPS: BANK_TIPS, guessCategory: guessCategory, BANK_KEY: BANK_KEY, CAL_KEY: CAL_KEY,
+    MAIL: MAIL, CAL: CAL, guessHost: guessHost, BANK_TIPS: BANK_TIPS, guessCategory: guessCategory, BANK_KEY: BANK_KEY, CAL_KEY: CAL_KEY,
   };
 })(typeof window !== "undefined" ? window : globalThis);

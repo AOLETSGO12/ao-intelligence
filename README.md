@@ -8,13 +8,15 @@ A white-label “managed AI agent” service for small businesses, as a static w
 
 | Area | How you connect it |
 | --- | --- |
-| Email and calendar, Google | **One sign-in** for Gmail (read, save drafts) and Google Calendar (read). Press Connect, sign in, press Allow. Needs `google.clientId` in `js/config.js`. |
-| Email and calendar, Microsoft | **One sign-in** for Outlook / Hotmail / Microsoft 365 mail and calendar (Microsoft Graph). Needs `microsoft.clientId` in `js/config.js`. |
-| iCloud, Yahoo, AOL, Zoho, Fastmail, others | Shown as **Coming soon**, with a "Let us know you need this" button that saves the request on the device. No passwords. |
-| Money | Upload a bank **CSV or OFX statement**. It is parsed in your browser and kept on the device. A **Stripe restricted key** (`rk_…`, read-only) also works through the backend. Open Banking is "coming soon". |
+| Gmail and Google Calendar | **One sign-in** (press Connect, sign in, press Allow). Needs `google.clientId` in `js/config.js`. Until it's set, the button says "Sign-in is being switched on" and Gmail offers an **app password** (IMAP) and Google Calendar a **secret iCal link**. Both fallbacks hide themselves once the client ID is set. |
+| Outlook, Hotmail, Microsoft 365 | **One sign-in** for mail and calendar (Microsoft Graph). Needs `microsoft.clientId`. Microsoft no longer allows passwords for Outlook mail, so mail waits for this sign-in. The calendar can use a published ICS link meanwhile. |
+| iCloud | One form: iCloud address + **app-specific password** (account.apple.com → Sign-In and Security) connects mail (IMAP) and calendar (CalDAV). |
+| Yahoo, AOL, Zoho, Fastmail, GMX, BT, Sky, Virgin Media | Address + app password (or password for BT and Virgin Media), servers pre-filled, with step-by-step guides. Yahoo and Fastmail calendars use CalDAV; Zoho and the rest use a private .ics link. |
+| Any other provider | "Find my settings" looks up the mail server from the address (built-in list, Mozilla's ISP database, then MX records), or type the server. Calendars: any CalDAV server or .ics link. |
+| Money | Upload a bank **CSV or OFX statement** (parsed in the browser, kept on the device). A **Stripe restricted key** (`rk_…`) also works through the backend. |
 | Tasks and targets | Add, edit and tick off your own. Suggestions come from real emails and events. |
 
-Until a client ID is filled in, the matching button answers "Sign-in is being switched on, check back soon."
+Email passwords, calendar links and Stripe keys go through the AO backend (`backend/`, a Cloudflare Worker), which seals them and never stores them.
 
 **Register the sign-in apps (once):**
 
@@ -27,11 +29,9 @@ Until a client ID is filled in, the matching button answers "Sign-in is being sw
   - Delegated Microsoft Graph permissions: `User.Read`, `offline_access`, `Mail.ReadWrite`, `Calendars.Read`.
 - Paste the two client IDs into `js/config.js`, then commit and push.
 
-The backend (`backend/`) still contains IMAP, CalDAV and .ics code, but the app no longer shows any of it.
-
 The Expo/Snack copy in `ao-intelligence-app` is unchanged and still uses sample data.
 
-The backend is only needed for Stripe and Shopify today (see [backend/README.md](backend/README.md)).
+The backend is described in [backend/README.md](backend/README.md).
 
 ## Live site
 

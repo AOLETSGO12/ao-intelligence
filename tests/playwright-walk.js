@@ -16,7 +16,15 @@ async function run(engineName, engine, label, ctxOpts) {
     await p.route(/googleapis\.com\//, route => { if (process.env.DBG) console.log('  ROUTE', route.request().method(), route.request().url()); if (route.request().method() === 'OPTIONS') return route.fulfill({ status: 204, headers: { 'access-control-allow-origin': '*', 'access-control-allow-headers': 'authorization,content-type', 'access-control-allow-methods': 'GET,POST,OPTIONS' } }); const u = route.request().url(); const j = /gmail/.test(u) ? { emailAddress: 'archie@gmail.com', messages: [], resultSizeEstimate: 0 } : /events/.test(u) ? { items: [] } : { id: 'archie@gmail.com' }; route.fulfill({ status: 200, headers: { 'content-type': 'application/json', 'access-control-allow-origin': '*' }, body: JSON.stringify(j) }); });
   }
   const errs = []; if (process.env.DBG) { p.on('console', m => console.log('  C', m.text().slice(0,160))); ctx.on('request', r => /googleapis/.test(r.url()) && console.log('  REQ', r.method(), r.url())); } p.on('pageerror', e => errs.push('PAGEERR ' + e.message)); p.on('console', m => { if (m.type() === 'error' && !/Failed to load resource|workers\.dev/.test(m.text())) errs.push('CONSOLE ' + m.text()); });
-  if (PROXY_LIVE && engineName === 'webkit') await ctx.route(/^https:\/\/aoletsgo12\.github\.io\//, async route => { const r = await fetch(route.request().url(), { headers: { 'cache-control': 'no-cache' } }); route.fulfill({ status: r.status, headers: { 'content-type': r.headers.get('content-type') || 'text/plain' }, body: Buffer.from(await r.arrayBuffer()) }); });
+  const apiReqs = [];
+  p.on('response', r => { if (/workers\.dev/.test(r.url())) apiReqs.push(r.request().method() + ' ' + r.url().replace(/^https:\/\/[^/]+/, '') + ' ' + r.status()); });
+  if (PROXY_LIVE && engineName === 'webkit') await ctx.route(/^https:\/\/(aoletsgo12\.github\.io|ao-intelligence-api\.ao-446557ec\.workers\.dev)\//, async route => {
+    const rq = route.request(); const h = { 'cache-control': 'no-cache' }; const hd = rq.headers();
+    for (const k of ['content-type', 'origin', 'access-control-request-method', 'access-control-request-headers']) if (hd[k]) h[k] = hd[k];
+    const r = await fetch(rq.url(), { method: rq.method(), headers: h, body: ['GET', 'HEAD', 'OPTIONS'].includes(rq.method()) ? undefined : rq.postDataBuffer() });
+    const out = {}; r.headers.forEach((v, k) => { if (!/^(content-encoding|content-length|transfer-encoding|connection)$/.test(k)) out[k] = v; });
+    route.fulfill({ status: r.status, headers: out, body: Buffer.from(await r.arrayBuffer()) });
+  });
   const tap = async (loc) => { await loc.scrollIntoViewIfNeeded(); await (ctxOpts.hasTouch ? loc.tap() : loc.click()); await p.waitForTimeout(450); };
   const btn = (t) => p.locator('button, a, label', { hasText: t }).filter({ visible: true }).first();
   const txt = () => p.evaluate(() => document.body.innerText);
@@ -27,36 +35,90 @@ async function run(engineName, engine, label, ctxOpts) {
   await tap(btn('Continue')); await p.fill('#biz-name', 'Archie Owen Racing'); await tap(btn('Continue')); await tap(btn('Let’s go'));
   let t = await txt(); ok(/Email/.test(t) && /Calendar/.test(t) && !/Xero|QuickBooks|FreeAgent|PayPal\s*\n/.test(t.replace(/Coming soon[^\n]*/, '')), 'pick screen lists only real options');
   await tap(btn('Continue with 3 selected'));
-  // --- mail: provider sign-in only
+  // --- mail
   t = await txt(); ok(/Connect your email/.test(t), 'email step');
-  ok(!/app password|App password|IMAP|apppasswords/i.test(t + await p.content().then(c => c.replace(/<script[\s\S]*?<\/script>/g, ''))), 'no app-password / IMAP wording anywhere on the email step');
-  ok(/Gmail \(Google\)/.test(t) && /Outlook, Hotmail or Microsoft 365/.test(t) && /iCloud Mail[^\n]*coming soon/i.test(t) && /Yahoo Mail[^\n]*coming soon/i.test(t), 'Gmail and Outlook listed, the rest marked coming soon');
-  ok(!(await p.locator('input[type=password]').count()), 'no password field');
+  const noPlaceholders = (x) => !/coming soon|let us know|not available yet|tell us which/i.test(x);
+  ok(noPlaceholders(t.replace(/Microsoft no longer allows[^\n]*/, '').replace(/Sign-in with Microsoft is coming very soon\./, '')), 'no “coming soon / let us know” text on the email step');
+  for (const n of ['Gmail (Google)', 'Outlook, Hotmail or Microsoft 365', 'iCloud Mail and Calendar', 'Yahoo Mail', 'AOL Mail', 'Zoho Mail', 'Fastmail', 'GMX', 'BT Mail', 'Sky Mail', 'Virgin Media', 'Another provider']) if (!t.includes(n)) ok(false, 'provider listed: ' + n);
+  ok(t.includes('Another provider') && t.includes('Virgin Media'), 'every provider is listed');
+  const tryMail = async (list, addr, pw, host, expectRe, label) => {
+    await tap(btn(list)); await p.waitForTimeout(250);
+    await p.locator('#real-addr').first().fill(addr); await p.locator('#real-pass').first().fill(pw);
+    if (host) await p.locator('#real-host').first().fill(host);
+    const before = apiReqs.length;
+    await tap(btn(/^Connect (iCloud mail|Yahoo|AOL|Zoho|Fastmail|GMX|BT|Sky|Virgin|my email|with)|^Connect (Gmail|iCloud)/i));
+    await p.waitForFunction(re => new RegExp(re).test(document.body.innerText), expectRe.source, { timeout: 25000 }).catch(() => {});
+    const tt = await txt(); const mine = apiReqs.slice(before).join(', ');
+    ok(expectRe.test(tt) && (!PROXY_LIVE || /POST \/imap\/connect 401/.test(mine)), label + ' → friendly wrong-password message (' + (mine || 'no request') + ')');
+  };
   await tap(btn('Gmail (Google)'));
+  t = await txt(); ok(!CONFIGURED ? /Almost ready/.test(t) && /Or connect with an app password/.test(t) && /apppasswords/.test(await p.content()) && /signinoptions\/twosv/.test(await p.content()) : !/Or connect with an app password/.test(t), CONFIGURED ? 'Gmail app-password fallback hidden once Google sign-in is configured' : 'Gmail: sign-in notice plus app-password fallback with Google links');
   await tap(btn('Connect Gmail')); t = await txt();
   if (!CONFIGURED) ok(/Sign-in is being switched on, check back soon/.test(t), 'unconfigured Google: Connect answers “Sign-in is being switched on”');
-  else { await p.waitForFunction(() => /is connected/.test(document.body.innerText), null, { timeout: 8000 }).catch(() => {}); t = await txt(); ok(/is connected/.test(t), 'Google sign-in connected'); if (!/is connected/.test(t)) console.log(t.slice(900, 1600)); ok(await p.evaluate(() => /gmail.readonly/.test(window.__gisScope || '') && /calendar.readonly/.test(window.__gisScope || '')), 'one consent asked for both Gmail and Calendar scopes'); await tap(btn('Continue')); }
+  else { await p.waitForFunction(() => /is connected/.test(document.body.innerText), null, { timeout: 8000 }).catch(() => {}); t = await txt(); ok(/is connected/.test(t), 'Google sign-in connected'); ok(await p.evaluate(() => /gmail.readonly/.test(window.__gisScope || '') && /calendar.readonly/.test(window.__gisScope || '')), 'one consent asked for both Gmail and Calendar scopes'); await tap(btn('Continue')); }
   if (!CONFIGURED) {
-    await tap(btn('Outlook, Hotmail or Microsoft 365')); await tap(btn('Connect Outlook'));
-    ok(/Sign-in is being switched on, check back soon/.test(await txt()), 'unconfigured Microsoft: Connect answers too');
-    await tap(btn('iCloud Mail'));
-    ok(/Coming soon/.test(await txt()), 'iCloud shows Coming soon');
-    await tap(btn('Let us know you need this'));
-    ok(/Thanks — noted/.test(await txt()), 'request button confirms');
-    ok(await p.evaluate(() => /icloud-mail/.test(localStorage.getItem('ao-provider-requests-v1') || '')), 'request saved on the device');
-    await tap(btn('Another email provider')); await tap(btn('Tell us which provider')); ok(/type which provider/.test(await txt()), 'Other asks which provider when empty');
-    await p.fill('#real-which', 'Proton'); await tap(btn('Tell us which provider')); ok(await p.evaluate(() => /Proton/.test(localStorage.getItem('ao-provider-requests-v1') || '')), '“Other” request saved');
+    const WRONG = /didn’t accept those details/;
+    await tap(btn('Outlook, Hotmail or Microsoft 365')); t = await txt();
+    ok(/coming very soon/i.test(t) && /Microsoft no longer allows/.test(t) && !(await p.locator('input[type=password]').count()), 'Outlook: “coming very soon” notice, limitation note, no password field');
+    await tap(btn('Connect Outlook')); ok(/coming very soon/i.test(await txt()), 'Outlook Connect answers');
+    if (PROXY_LIVE) {
+      await tryMail('Gmail (Google)', 'fake.person.7731@gmail.com', 'abcd efgh ijkl mnop', '', WRONG, 'Gmail app password (IMAP)');
+      await tryMail('iCloud Mail and Calendar', 'fake.person.7731@icloud.com', 'abcd-efgh-ijkl-mnop', '', WRONG, 'iCloud IMAP');
+      await tryMail('Yahoo Mail', 'fake.person.7731@yahoo.com', 'abcdefghijklmnop', '', WRONG, 'Yahoo');
+      await tryMail('AOL Mail', 'fake.person.7731@aol.com', 'abcdefghijklmnop', '', WRONG, 'AOL');
+      await tryMail('Zoho Mail', 'fake.person.7731@zoho.com', 'abcdefghijkl', '', WRONG, 'Zoho');
+      await tryMail('Fastmail', 'fake.person.7731@fastmail.com', 'abcdefghijkl', '', WRONG, 'Fastmail');
+      await tryMail('GMX', 'fake.person.7731@gmx.co.uk', 'abcdefghijkl', '', WRONG, 'GMX');
+      await tryMail('BT Mail', 'fake.person.7731@btinternet.com', 'notmypassword1', '', WRONG, 'BT Mail');
+      await tryMail('Sky Mail', 'fake.person.7731@sky.com', 'abcdefghijklmnop', '', WRONG, 'Sky Mail');
+      await tryMail('Virgin Media', 'fake.person.7731@virginmedia.com', 'notmypassword1', '', WRONG, 'Virgin Media');
+      // another provider: auto-detect, then a manual server
+      await tap(btn('Another provider'));
+      await p.locator('#real-addr').first().fill('fake.person.7731@fastmail.org'); await tap(btn('Find my settings')); await p.waitForTimeout(3500);
+      ok(await p.locator('#real-host').first().inputValue() === 'imap.fastmail.com', 'Another provider: “Find my settings” detects the server from the address');
+      await tryMail('Another provider', 'fake.person.7731@example.com', 'abcdefghijkl', 'imap.fastmail.com', WRONG, 'manual server (imap.fastmail.com)');
+    } else {
+      await tap(btn('iCloud Mail and Calendar')); t = await txt(); ok(/App-Specific Passwords/.test(t) && (await p.locator('a[href*="account.apple.com"]').count()) > 0 && (await p.locator('#real-host').first().inputValue()) === 'imap.mail.me.com', 'iCloud form with Apple deep link and server pre-filled');
+      await tap(btn('Another provider')); ok(await p.locator('#real-detect').count() === 1, 'Another provider has a working form with “Find my settings”');
+    }
     await tap(btn('Skip for now'));
-    t = await txt(); ok(/Connect your calendar/.test(t) && !/\.ics|iCal|CalDAV|Calendly|Upload a calendar file/i.test(t), 'calendar step has no link/file/CalDAV flows');
-    await tap(btn('Google Calendar')); await tap(btn('Connect Google Calendar')); ok(/Sign-in is being switched on/.test(await txt()), 'Google Calendar Connect answers');
-    await tap(btn('iCloud Calendar')); ok(/Coming soon/.test(await txt()), 'iCloud Calendar coming soon');
-    await tap(btn('Skip for now'));
+    // --- calendar
+    t = await txt(); ok(/Connect your calendar/.test(t), 'calendar step'); ok(noPlaceholders(t), 'no placeholders on the calendar step');
+    await tap(btn('Google Calendar')); t = await txt();
+    ok(/Almost ready/.test(t) && /Or use a secret iCal link/.test(t) && /Secret address in iCal format/.test(t), 'Google Calendar: sign-in notice + secret iCal link option');
+    await tap(btn('Connect Google Calendar')); ok(/Sign-in is being switched on/.test(await txt()), 'Google Calendar Connect answers');
+    await tap(btn('Connect with this link')); ok(/paste the calendar link/.test(await txt()), 'empty link → clear message');
+    await tap(btn('Outlook or Microsoft 365 calendar')); t = await txt(); ok(/coming very soon/i.test(t) && /Publish a calendar/.test(t), 'Outlook calendar: notice + published ICS link option');
+    if (PROXY_LIVE) {
+      const tryCal = async (list, btnRe, user, pw, urlv, re, apiRe, label) => {
+        await tap(btn(list)); await p.waitForTimeout(250);
+        if (user) await p.locator('#real-user').first().fill(user);
+        if (pw) await p.locator('#real-cpass').first().fill(pw);
+        if (urlv) await p.locator('#real-url').first().fill(urlv);
+        const before = apiReqs.length; await tap(btn(btnRe));
+        await p.waitForFunction(r => new RegExp(r).test(document.body.innerText), re.source, { timeout: 25000 }).catch(() => {});
+        const mine = apiReqs.slice(before).join(', '); ok(re.test(await txt()) && apiRe.test(mine), label + ' (' + mine + ')');
+      };
+      const CWRONG = /didn’t accept that username and app password/;
+      await tryCal('iCloud Calendar and Mail', /^Connect iCloud calendar and mail/, 'fake.person.7731@icloud.com', 'abcd-efgh-ijkl-mnop', '', CWRONG, /POST \/caldav\/connect 401/, 'iCloud CalDAV → friendly wrong-password message');
+      await tryCal('Yahoo Calendar', /^Connect Yahoo Calendar/, 'fake.person.7731@yahoo.com', 'abcdefghijklmnop', '', CWRONG, /POST \/caldav\/connect 401/, 'Yahoo CalDAV → friendly wrong-password message');
+      await tryCal('Fastmail Calendar', /^Connect Fastmail Calendar/, 'fake.person.7731@fastmail.com', 'abcdefghijkl', '', CWRONG, /POST \/caldav\/connect 401/, 'Fastmail CalDAV → friendly wrong-password message');
+      await tryCal('Any CalDAV calendar', /^Connect Any CalDAV/, 'fake.person.7731@icloud.com', 'abcd-efgh-ijkl-mnop', 'https://caldav.icloud.com/', CWRONG, /POST \/caldav\/connect 401/, 'manual CalDAV server');
+      await tryCal('Any calendar link', /^Connect Any calendar link/, '', '', 'https://example.com/', /didn’t return a calendar/, /POST \/ics\/connect 422/, 'a non-calendar link is refused cleanly');
+      await tap(btn('Google Calendar')); await p.locator('#real-url').first().fill('https://www.gov.uk/bank-holidays/england-and-wales.ics');
+      const bi = apiReqs.length; await tap(btn('Connect with this link')); await p.waitForTimeout(3500);
+      ok(/POST \/ics\/connect 200/.test(apiReqs.slice(bi).join(', ')), 'secret-iCal-style link accepted by the Worker (live fetch of UK bank holidays)');
+      t = await txt(); ok(/is connected/.test(t), 'calendar link shows connected'); await tap(btn('Continue'));
+    } else {
+      await tap(btn('iCloud Calendar and Mail')); ok((await p.locator('#real-url').first().inputValue()) === 'https://caldav.icloud.com/' && (await p.locator('a[href*="account.apple.com"]').count()) > 0, 'iCloud calendar form with Apple deep link and CalDAV server pre-filled');
+      await tap(btn('Skip for now'));
+    }
   } else {
     t = await txt(); ok(/Google Calendar is connected/i.test(t), 'one Google sign-in connected the calendar too');
     await tap(btn('Continue'));
   }
   // --- bank
-  t = await txt(); ok(/Add your bank statement/.test(t) && /coming soon/i.test(t), 'bank step with Open Banking marked coming soon');
+  t = await txt(); ok(/Add your bank statement/.test(t) && noPlaceholders(t), 'bank step: upload flow, no placeholders');
   await p.selectOption('#real-bank', 'monzo'); await p.waitForTimeout(300);
   ok(/Monzo: in the app/.test(await txt()), 'Monzo-specific export tip');
   await p.setInputFiles('#real-file', '/tmp/fx/monzo.csv'); await p.waitForTimeout(600);

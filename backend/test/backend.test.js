@@ -305,3 +305,14 @@ test("ai drafts only when configured, and parse the provider answer", async () =
   const j = await (await call(h, { ...ENV, AI_API_URL: "https://ai.example/v1/chat", AI_API_KEY: "k" }, "/ai/draft", { method: "POST", body: { from: "Sam", subject: "x", snippet: "y", business: "B", owner: "O" } })).json();
   assert.equal(j.drafts.length, 2);
 });
+
+test("imap/detect: well-known providers resolve without any network", async () => {
+  const { detectImap } = await import("../src/detect.js");
+  const none = async () => { throw new Error("no network"); };
+  assert.equal((await detectImap(none, "a@icloud.com")).host, "imap.mail.me.com");
+  assert.equal((await detectImap(none, "a@sky.com")).host, "imap.mail.yahoo.com");
+  assert.equal((await detectImap(none, "a@gmx.co.uk")).host, "imap.gmx.com");
+  assert.equal((await detectImap(none, "a@gmx.de")).host, "imap.gmx.net");
+  assert.equal((await detectImap(none, "a@btinternet.com")).host, "mail.btinternet.com");
+  assert.equal((await detectImap(none, "a@unknown-domain-xyz.org")).host, "");
+});

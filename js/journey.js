@@ -16,7 +16,7 @@
 
   if (REAL) {
     // Real app: say plainly what each connection does today.
-    Object.assign(E.ITEM_BY_KEY["bank"], { short: "Upload a bank statement (CSV or OFX) to see money in and out. It stays on this device.", sees: ["Money in and out, from the statement you upload", "Totals, a daily chart and categories", "Nothing is sent anywhere — the file is read in your browser"], never: "Nothing is linked to your bank. A live Open Banking connection is coming soon; until then you choose what to upload." });
+    Object.assign(E.ITEM_BY_KEY["bank"], { short: "Upload a bank statement (CSV or OFX) to see money in and out. It stays on this device.", sees: ["Money in and out, from the statement you upload", "Totals, a daily chart and categories", "Nothing is sent anywhere — the file is read in your browser"], never: "Nothing is linked to your bank. You choose what to upload, and we never show numbers you didn’t give us." });
     Object.assign(E.ITEM_BY_KEY["sales:stripe"], { short: "Card payments and payouts, with a read-only key." });
     Object.assign(E.ITEM_BY_KEY["mail"], { never: "We only read your inbox and save drafts to your Drafts folder. Nothing is ever sent for you." });
     state.selected = state.selected.filter(function (k) { return REAL_KEYS.indexOf(k) !== -1; });
@@ -172,8 +172,7 @@
             h("span", { class: "j-tile-short" }, it.short));
         })));
       });
-      if (REAL) wrap.appendChild(h("p", { class: "j-hint j-pad" }, "Coming soon: live bank connections (Open Banking), PayPal, SumUp, Square, Xero, QuickBooks and FreeAgent."));
-      wrap.appendChild(h("div", { class: "j-field" }, h("label", { for: "pick-other" }, "Something else? Tell us"), note,
+      if (!REAL) wrap.appendChild(h("div", { class: "j-field" }, h("label", { for: "pick-other" }, "Something else? Tell us"), note,
         h("p", { class: "j-hint" }, "We’ll note it down — we’re adding more every month.")));
       cta.textContent = sel.length ? "Continue with " + sel.length + " selected" : "Continue without connecting anything";
     }
@@ -448,8 +447,8 @@
   function providerList(list, onPick) {
     return h("div", { class: "j-results j-results-open", role: "listbox", "aria-label": "Choose one" }, list.map(function (p) {
       var on = rui.provider === p.id;
-      return h("button", { class: "j-result" + (on ? " is-on" : ""), type: "button", role: "option", "aria-selected": on ? "true" : "false", on: { click: function () { var y = window.pageYOffset; rui.provider = p.id; rui.error = ""; onPick && onPick(p); render(); window.scrollTo(0, y); var pn = document.getElementById("real-panel"); if (pn && pn.scrollIntoView) { try { pn.scrollIntoView({ block: "start", behavior: "smooth" }); } catch (x) { pn.scrollIntoView(); } } } } },
-        h("span", null, p.name, p.soon ? h("small", { class: "j-soon" }, " · coming soon") : null), on ? h("span", { class: "j-result-tick", "aria-hidden": "true" }, "✓") : null);
+      return h("button", { class: "j-result" + (on ? " is-on" : ""), type: "button", role: "option", "aria-selected": on ? "true" : "false", on: { click: function () { var y = window.pageYOffset; rui.provider = p.id; rui.error = ""; rui.notice = ""; rui.hostNote = ""; delete rui.vals.host; delete rui.vals.url; delete rui.vals.password; onPick && onPick(p); render(); window.scrollTo(0, y); var pn = document.getElementById("real-panel"); if (pn && pn.scrollIntoView) { try { pn.scrollIntoView({ block: "start", behavior: "smooth" }); } catch (x) { pn.scrollIntoView(); } } } } },
+        h("span", null, p.name), on ? h("span", { class: "j-result-tick", "aria-hidden": "true" }, "✓") : null);
     }));
   }
   function fileInput(accept, onFile, label) {
@@ -465,8 +464,17 @@
     return h("label", { class: "j-filebtn btn btn-secondary j-wide", for: "real-file" }, label || "Choose a file", inp);
   }
 
-  // ---------------------------------------------------------------- mail and calendar: provider sign-in only
+  // ---------------------------------------------------------------- mail and calendar
   var SWITCHING_ON = "Sign-in is being switched on, check back soon.";
+  var MS_SOON = "Sign-in with Microsoft is coming very soon.";
+  var ICLOUD_CAL = "https://caldav.icloud.com/";
+  function hostFor(g, addr, typed) {
+    typed = String(typed || "").trim();
+    if (typed && typed !== g.host) return typed;
+    if (g.id === "gmx" || g.id === "zoho-mail" || g.other) { var gh = R.guessHost(addr); if (gh) return gh; }
+    return typed || g.host || "";
+  }
+  /** Sign in with Google or Microsoft: one sign-in covers mail and calendar. */
   function oauthPanel(provider, what, itemKey, children) {
     var panel = h("div", { class: "j-panel", id: "real-panel" });
     panel.appendChild(h("h2", { class: "j-sub" }, provider.name));
@@ -478,46 +486,133 @@
       h("li", null, "Sign in and press Allow."),
       h("li", null, "That’s it — " + (rt === "google" ? "Gmail and Google Calendar are both connected in one go." : "Outlook mail and calendar are both connected in one go."))));
     panel.appendChild(h("p", { class: "j-hint" }, "We ask only to " + what + " We can’t send mail, and you can disconnect any time."));
-    if (!ready) panel.appendChild(h("div", { class: "j-notice", role: "note" }, h("strong", null, "Almost ready. "), SWITCHING_ON));
+    if (provider.note && itemKey === "mail" && rt === "microsoft") panel.appendChild(h("div", { class: "j-notice", role: "note" }, provider.note));
+    var soonMsg = rt === "google" ? SWITCHING_ON : MS_SOON;
+    if (!ready) panel.appendChild(h("div", { class: "j-notice", role: "note" }, h("strong", null, rt === "google" ? "Almost ready. " : "Coming very soon. "), soonMsg));
     panel.appendChild(errBox());
     var label = itemKey === "mail" ? (rt === "google" ? "Connect Gmail" : "Connect Outlook") : (rt === "google" ? "Connect Google Calendar" : "Connect Outlook calendar");
     panel.appendChild(actionButton(label, function () {
-      if (!ready) return Promise.reject(new Error(SWITCHING_ON));
+      if (!ready) return Promise.reject(new Error(soonMsg));
       return L.connect(itemKey, provider.id, provider.name, rt, {}, state.connected);
     }));
     children.push(panel);
+    return ready;
   }
-  /** "Coming soon" for a provider, with a button that remembers on this device that the person needs it. */
-  function soonPanel(provider, kind, children) {
-    var panel = h("div", { class: "j-panel", id: "real-panel" });
-    panel.appendChild(h("h2", { class: "j-sub" }, provider.name));
-    panel.appendChild(h("div", { class: "j-notice", role: "note" }, h("strong", null, "Coming soon. "), provider.other ? "Tell us which one you use and we’ll bring it forward." : provider.name + " isn’t available yet."));
-    if (provider.other) panel.appendChild(textInput("real-which", "Which provider do you use?", "which", { placeholder: kind === "mail" ? "e.g. Proton, a work server…" : "e.g. Fastmail, a work calendar…" }));
-    var asked = R.hasRequest(provider.id);
+
+  /** Address + app password (or password) over IMAP. iCloud (g.both) also connects the calendar from the same form. */
+  function imapPanel(g, children, opts) {
+    opts = opts || {};
+    var panel = opts.nested ? h("div", { class: "j-panel j-nested", id: "real-fallback" }) : h("div", { class: "j-panel", id: "real-panel" });
+    panel.appendChild(h("h2", { class: opts.nested ? "j-sub j-sub-small" : "j-sub" }, opts.nested ? "Or connect with an app password" : g.name));
+    panel.appendChild(guideSteps(g));
+    if (g.note && !opts.nested) panel.appendChild(h("p", { class: "j-hint" }, g.note));
+    panel.appendChild(textInput("real-addr", "Your email address", "address", { type: "email", inputmode: "email", autocomplete: "email", placeholder: "you@example.com", value: rui.vals.address || (state.account ? state.account.email : "") }));
+    panel.appendChild(textInput("real-pass", g.other ? "Password or app password" : (g.id === "bt" || g.id === "virgin" ? "Email password" : "App password"), "password", { type: "password", placeholder: g.id === "gmail" ? "16-letter code" : g.id === "icloud-mail" ? "abcd-efgh-ijkl-mnop" : "", hint: "Sent over an encrypted connection, sealed, and kept only in this browser." }));
+    var host = textInput("real-host", "Mail server (IMAP)", "host", { value: rui.vals.host != null ? rui.vals.host : g.host, placeholder: "imap.example.com", hint: "Port 993 (SSL). " + (g.other ? "We can look it up for you, or type it in." : "Already filled in — only change it if your provider says otherwise.") });
+    if (g.other) {
+      panel.appendChild(host);
+      panel.appendChild(h("button", { class: "btn btn-secondary j-wide", type: "button", id: "real-detect", on: { click: function () {
+        var a = String(rui.vals.address || "").trim();
+        if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(a)) { showError("Type your email address first."); return; }
+        showError("");
+        var gh = R.guessHost(a);
+        var done = function (hst, kind) {
+          if (kind === "microsoft") { showError("That looks like an Outlook / Microsoft mailbox. Choose “Outlook, Hotmail or Microsoft 365” above — Microsoft doesn’t allow passwords."); return; }
+          if (kind === "proton") { showError("Proton Mail only allows other apps in through Proton Bridge on your own computer, so it can’t be connected here."); return; }
+          if (hst) { rui.vals.host = hst; rui.hostNote = "Found: " + hst; } else rui.hostNote = "We couldn’t find it automatically — please type your provider’s mail server above.";
+          render();
+        };
+        if (!L || !L.detectImap) return done(gh);
+        L.detectImap(a).then(function (r) { done(r.host || gh, r.kind); }, function () { done(gh); });
+      } } }, "Find my settings"));
+      if (rui.hostNote) panel.appendChild(h("p", { class: "j-hint", role: "status" }, rui.hostNote));
+    } else panel.appendChild(h("details", { class: "j-details" }, h("summary", null, "Server settings"), host));
     panel.appendChild(errBox());
-    var btn = h("button", { class: "btn btn-secondary j-wide", type: "button", id: "real-need" }, asked ? "Thanks — noted ✓" : (provider.other ? "Tell us which provider" : "Let us know you need this"));
-    btn.addEventListener("click", function () {
-      var note = provider.other ? String(rui.vals.which || "").trim() : "";
-      if (provider.other && !note) { showError("Please type which provider you use."); return; }
-      showError("");
-      if (!R.saveRequest(kind, provider.id, note || provider.name, note)) { showError("This browser wouldn’t let us save that on this device."); return; }
-      rui.error = ""; render();
-    });
-    panel.appendChild(btn);
-    if (asked) panel.appendChild(h("p", { class: "j-hint", role: "status" }, "Saved on this device. Nothing was sent."));
+    var label = g.both ? "Connect iCloud mail and calendar" : "Connect " + (g.other ? "my email" : g.name);
+    panel.appendChild(actionButton(label, function () {
+      var v = rui.vals, addr = String(v.address || "").trim(), pw = String(v.password || "");
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(addr)) return Promise.reject(new Error("Please enter your email address."));
+      if (!pw.trim()) return Promise.reject(new Error("Please paste the " + (g.id === "bt" || g.id === "virgin" ? "email password." : "app password (see the steps above).")));
+      if (g.id === "gmail" || g.id === "icloud-mail" || g.id === "yahoo" || g.id === "sky") pw = pw.replace(/\s+/g, "");
+      var hostV = hostFor(g, addr, v.host);
+      var go = hostV ? Promise.resolve(hostV) : (L && L.detectImap ? L.detectImap(addr).then(function (r) { return r.host || ""; }, function () { return ""; }) : Promise.resolve(""));
+      return go.then(function (hh) {
+        if (!hh) throw new Error("Please enter your mail server, for example imap.example.com (or press “Find my settings”).");
+        return needBackend("Email can’t be read directly from a web page, so it has to go through the AO service.").then(function () {
+          var name = g.other ? "Email (" + addr.split("@")[1] + ")" : g.name.replace(/ and Calendar$/, "").replace(/ Mail and Calendar$/, " Mail");
+          return L.connect("mail", g.id, name, "imap", { address: addr, password: pw, host: hh }, state.connected).then(function (mailConn) {
+            if (!g.both) return mailConn;
+            return L.connect("calendar", "icloud-calendar", "iCloud Calendar", "caldav", { url: ICLOUD_CAL, username: addr, password: pw }, state.connected).then(function (calConn) { mailConn.also = [calConn]; return mailConn; },
+              function (e) { rui.notice = "Your mail is connected, but the calendar wasn’t: " + ((e && e.message) || "it didn’t work") + " You can add it again from the calendar step."; return mailConn; });
+          });
+        });
+      });
+    }));
     children.push(panel);
   }
+
+  /** A calendar link (.ics / webcal). */
+  function icsPanel(g, children, opts) {
+    opts = opts || {};
+    var panel = opts.nested ? h("div", { class: "j-panel j-nested", id: "real-fallback" }) : h("div", { class: "j-panel", id: "real-panel" });
+    panel.appendChild(h("h2", { class: opts.nested ? "j-sub j-sub-small" : "j-sub" }, opts.nested ? (g.id === "google-calendar" ? "Or use a secret iCal link" : "Or use a published calendar link") : g.name));
+    panel.appendChild(guideSteps(g));
+    if (g.note) panel.appendChild(h("p", { class: "j-hint" }, g.note));
+    panel.appendChild(textInput("real-url", "Calendar link", "url", { placeholder: "https://… .ics  or  webcal://…", hint: "Keep it private: anyone with this link can see the calendar." }));
+    panel.appendChild(errBox());
+    panel.appendChild(actionButton("Connect " + (opts.nested ? "with this link" : g.name), function () {
+      var u = String(rui.vals.url || "").trim();
+      if (!/^(webcal:|https?:)\/\//i.test(u)) return Promise.reject(new Error("Please paste the calendar link (it starts with https:// or webcal://)."));
+      return needBackend("Calendar links are read through the AO service.").then(function () { return L.connect("calendar", g.id, g.name, "caldav", { url: u, icsOnly: true }, state.connected); });
+    }));
+    children.push(panel);
+  }
+
+  /** CalDAV with username + app password (iCloud, Yahoo, Fastmail, or any server). iCloud also connects mail. */
+  function caldavPanel(g, children) {
+    var panel = h("div", { class: "j-panel", id: "real-panel" });
+    panel.appendChild(h("h2", { class: "j-sub" }, g.name));
+    panel.appendChild(guideSteps(g));
+    var manual = !g.url;
+    if (manual) panel.appendChild(textInput("real-url", "CalDAV server address", "url", { placeholder: "https://caldav.example.com/" }));
+    panel.appendChild(textInput("real-user", g.both ? "Your iCloud email address" : "Username (usually your email address)", "username", { autocomplete: "username", value: rui.vals.username || rui.vals.address || (state.account ? state.account.email : "") }));
+    panel.appendChild(textInput("real-cpass", "App password", "password", { type: "password", placeholder: g.both ? "abcd-efgh-ijkl-mnop" : "", hint: "Sent over an encrypted connection, sealed, and kept only in this browser." }));
+    if (!manual) panel.appendChild(h("details", { class: "j-details" }, h("summary", null, "Server settings"), textInput("real-url", "CalDAV server address", "url", { value: rui.vals.url != null ? rui.vals.url : g.url })));
+    panel.appendChild(errBox());
+    panel.appendChild(actionButton(g.both ? "Connect iCloud calendar and mail" : "Connect " + g.name, function () {
+      var v = rui.vals, user = String(v.username || "").trim(), pw = String(v.password || "").replace(g.both ? /\s+/g : /^$/, ""), url = String(v.url != null ? v.url : g.url || "").trim();
+      if (!url) return Promise.reject(new Error("Please enter the CalDAV server address."));
+      if (!user) return Promise.reject(new Error("Please enter your username."));
+      if (!pw) return Promise.reject(new Error("Please paste the app password (see the steps above)."));
+      return needBackend("Calendars are read through the AO service.").then(function () {
+        return L.connect("calendar", g.id, g.name.replace(/ and Mail$/, ""), "caldav", { url: url, username: user, password: pw }, state.connected).then(function (calConn) {
+          if (!g.both || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(user)) return calConn;
+          return L.connect("mail", "icloud-mail", "iCloud Mail", "imap", { address: user, password: pw, host: "imap.mail.me.com" }, state.connected).then(function (m) { calConn.also = [m]; return calConn; },
+            function (e) { rui.notice = "Your calendar is connected, but the mail wasn’t: " + ((e && e.message) || "it didn’t work") + " You can add it again from the email step."; return calConn; });
+        });
+      });
+    }));
+    children.push(panel);
+  }
+
   function realMail(children) {
     var g = R.MAIL.filter(function (x) { return x.id === rui.provider; })[0];
-    children.push(h("div", { class: "j-field" }, h("label", { id: "pick-label" }, "Which email do you use?"), providerList(R.MAIL, null, "mail")));
+    children.push(h("div", { class: "j-field" }, h("label", { id: "pick-label" }, "Which email do you use?"), providerList(R.MAIL)));
     if (!g) { children.push(h("p", { class: "j-hint" }, "Choose your email provider above.")); return; }
-    if (g.soon) soonPanel(g, "mail", children); else oauthPanel(g, "read your recent mail and save reply drafts.", "mail", children);
+    if (g.oauth) {
+      var ready = oauthPanel(g, "read your recent mail and save reply drafts.", "mail", children);
+      if (g.id === "gmail" && !ready) imapPanel(g, children, { nested: true });
+    } else imapPanel(g, children);
   }
   function realCalendar(children) {
     var g = R.CAL.filter(function (x) { return x.id === rui.provider; })[0];
-    children.push(h("div", { class: "j-field" }, h("label", { id: "pick-label" }, "Which calendar do you use?"), providerList(R.CAL, null, "calendar")));
+    children.push(h("div", { class: "j-field" }, h("label", { id: "pick-label" }, "Which calendar do you use?"), providerList(R.CAL)));
     if (!g) { children.push(h("p", { class: "j-hint" }, "Choose your calendar above.")); return; }
-    if (g.soon) soonPanel(g, "calendar", children); else oauthPanel(g, "read your calendar events.", "calendar", children);
+    if (g.oauth) {
+      var ready = oauthPanel(g, "read your calendar events.", "calendar", children);
+      if (!ready) icsPanel(g, children, { nested: true });
+    } else if (g.kind === "caldav") caldavPanel(g, children);
+    else icsPanel(g, children);
   }
 
   // ---------------------------------------------------------------- bank statement
@@ -555,7 +650,7 @@
       }));
     }
     children.push(panel);
-    children.push(h("div", { class: "j-panel j-soon" }, h("strong", null, "Live bank connection — coming soon"), h("p", { class: "j-hint" }, "Connecting straight to your bank (Open Banking) needs a regulated partner and isn’t switched on yet. We’ll never show made-up numbers in the meantime — only what you upload.")));
+    children.push(h("p", { class: "j-hint" }, "Only what you upload is shown. We never make up numbers."));
   }
 
   // ---------------------------------------------------------------- Stripe / Shopify
@@ -608,8 +703,9 @@
       children.push(h("div", { class: "j-success", role: "status" }, h("span", { class: "j-success-tick", "aria-hidden": "true" }, "✓"),
         h("div", null, h("strong", null, conn.providerName + " is connected"), conn.detail ? h("p", { class: "j-hint" }, conn.detail) : null,
           h("p", { class: "j-hint" }, conn.route === "local" ? "Kept on this device — nothing was uploaded." : "Live — showing your real data."))));
+      if (rui.notice) children.push(h("div", { class: "j-notice is-warn", role: "alert" }, rui.notice));
       if (key === "bank" && conn.route === "local") children.push(h("button", { class: "btn btn-secondary j-wide j-gap", type: "button", on: { click: function () { rui.reupload = true; render(); } } }, "Upload a newer statement"));
-      children.push(h("button", { class: "btn btn-primary j-wide j-gap", type: "button", on: { click: nextAfterItem } }, single ? "Back to my dashboard" : "Continue"));
+      children.push(h("button", { class: "btn btn-primary j-wide j-gap", type: "button", on: { click: function () { rui.notice = ""; nextAfterItem(); } } }, single ? "Back to my dashboard" : "Continue"));
       setRoot(card.apply(null, children));
       return;
     }

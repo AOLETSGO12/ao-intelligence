@@ -548,6 +548,8 @@
   // ------------------------------------------------------------ the public pieces used by the journey
   var KIND_LABEL = { google: "Google", microsoft: "Microsoft", truelayer: "your bank", stripe: "Stripe", shopify: "Shopify", imap: "your mail server", caldav: "your calendar", calendly: "Calendly" };
 
+  /** Which IMAP server does this address use? Resolves {host, kind}; host may be empty. */
+  function detectImap(address) { return api("/imap/detect", { address: address }, 12000); }
   /** Called by startConnection when the route is live. Returns the session fields the journey shows. */
   function liveSession(itemKey, providerId, name, rt, typed, caps) {
     var fields = fieldsFor(rt, itemKey, providerId, caps, typed);
@@ -733,7 +735,7 @@
 
   root.AOLive = {
     config: cfg, configured: configured, redirectUri: redirectUri, route: route, backendCaps: backendCaps,
-    liveSession: liveSession, complete: complete, connect: connect, finishRedirect: finishRedirect, reconnect: reconnect, disconnect: disconnect,
+    liveSession: liveSession, complete: complete, connect: connect, detectImap: detectImap, finishRedirect: finishRedirect, reconnect: reconnect, disconnect: disconnect,
     _preload: loadGis, cancelPending: cancelPending, RESULT_KEY: RESULT_KEY, load: load, saveDraft: saveDraft, clearTokens: clearTokens, KIND_LABEL: KIND_LABEL,
     // exposed for tests
     _t: { mapGmail: mapGmail, mapGoogleEvents: mapGoogleEvents, mapGraphMail: mapGraphMail, mapGraphEvents: mapGraphEvents, parseAddress: parseAddress, decodeEntities: decodeEntities, msBuildAuthUrl: msBuildAuthUrl, fieldsFor: fieldsFor, orgFromDomain: orgFromDomain, AUTO_SENDER: AUTO_SENDER }

@@ -222,4 +222,4 @@
 .j-panel select, #real-bank { width: 100%; min-height: 48px; font-size: 16px; }
 [hidden] { display: none !important; }
 
-.j-soon{color:var(--muted,#6b7280);font-weight:400;font-size:.85em}
+.j-nested{margin-top:14px}.j-sub-small{font-size:1rem}

@@ -19,6 +19,7 @@ import * as TL from "./truelayer.js";
 import * as ST from "./stripe.js";
 import * as SH from "./shopify.js";
 import { aiDrafts } from "./ai.js";
+import { detectImap } from "./detect.js";
 
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -152,6 +153,11 @@ export function createHandler({ fetchImpl = fetch, openImap = (host) => connectT
     const tz = typeof body.tz === "string" && body.tz.length < 60 ? body.tz : "Europe/London";
 
     // ---------------------------------------------------------------- connect (validate + seal)
+    if (path === "/imap/detect") {
+      const address = String(body.address || "").trim();
+      if (!EMAIL.test(address)) throw new HttpError(400, "That email address doesn’t look right.");
+      return json(env, request, await detectImap(fetchImpl, address));
+    }
     if (path === "/imap/connect") {
       const address = String(body.address || "").trim();
       if (!EMAIL.test(address)) throw new HttpError(400, "That email address doesn’t look right.");
