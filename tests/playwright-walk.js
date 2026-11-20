@@ -204,7 +204,7 @@ async function run(engineName, engine, label, ctxOpts) {
   ok(!/Email the sponsor deck/.test(t) && !/Order parts/.test(t), 'the new dashboard does not show the other dashboard’s tasks');
   const racing = await p.locator('#dash-select option', { hasText: 'Archie Owen Racing' }).getAttribute('value');
   await p.selectOption('#dash-select', racing);
-  await p.waitForTimeout(1800);
+  await p.waitForFunction(() => /Email the sponsor deck/.test(document.body.innerText), null, { timeout: 15000 }).catch(() => {});
   t = await txt();
   ok(/Email the sponsor deck/.test(t) && /Order parts/.test(t), 'switching back keeps the first dashboard’s tasks');
   await p.goto(BASE + 'start.html', { waitUntil: 'domcontentloaded' });
