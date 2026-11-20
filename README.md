@@ -6,19 +6,32 @@ A white-label “managed AI agent” service for small businesses, as a static w
 
 ### What works today
 
-| Area | How you connect it | Needs the backend? |
-| --- | --- | --- |
-| Email (Gmail, iCloud, Yahoo, AOL, Zoho, Fastmail, any IMAP) | Create an **app password** with the in-app steps, e.g. https://myaccount.google.com/apppasswords for Gmail. Mail is read-only. | Yes |
-| Outlook.com / Hotmail / Microsoft 365 mail | Microsoft removed password and app-password IMAP, so use **Sign in with Microsoft** (needs `microsoft.clientId` in `js/config.js`), or forward Outlook to Gmail/iCloud and connect that. | Sign-in: no. Forwarding route: yes. |
-| Calendar | A private **.ics link** (Google "secret address in iCal format", Outlook "publish calendar" ICS, iCloud public link), CalDAV, Calendly, or an uploaded `.ics` file. | Links: yes. Uploaded file: no. |
-| Money | Upload a bank **CSV or OFX statement**. It is parsed in your browser and kept on the device. A **Stripe restricted key** (`rk_…`, read-only) is also supported. | CSV/OFX: no. Stripe: yes. |
-| Tasks and targets | Add, edit and tick off your own. Suggestions come from real emails and events. | No |
+| Area | How you connect it |
+| --- | --- |
+| Email and calendar, Google | **One sign-in** for Gmail (read, save drafts) and Google Calendar (read). Press Connect, sign in, press Allow. Needs `google.clientId` in `js/config.js`. |
+| Email and calendar, Microsoft | **One sign-in** for Outlook / Hotmail / Microsoft 365 mail and calendar (Microsoft Graph). Needs `microsoft.clientId` in `js/config.js`. |
+| iCloud, Yahoo, AOL, Zoho, Fastmail, others | Shown as **Coming soon**, with a "Let us know you need this" button that saves the request on the device. No passwords. |
+| Money | Upload a bank **CSV or OFX statement**. It is parsed in your browser and kept on the device. A **Stripe restricted key** (`rk_…`, read-only) also works through the backend. Open Banking is "coming soon". |
+| Tasks and targets | Add, edit and tick off your own. Suggestions come from real emails and events. |
 
-Open Banking stays "coming soon" until TrueLayer is set up. Nothing is faked in its place.
+Until a client ID is filled in, the matching button answers "Sign-in is being switched on, check back soon."
+
+**Register the sign-in apps (once):**
+
+- **Google** (console.cloud.google.com): create a project, enable the *Gmail API* and *Google Calendar API*, configure the OAuth consent screen (External, Testing, add your own Google address as a test user), then create an OAuth client ID of type *Web application*.
+  - Authorised JavaScript origin: `https://aoletsgo12.github.io` (no path, no trailing slash).
+  - Authorised redirect URI: none is needed for this sign-in (it uses Google Identity Services in a popup). `https://aoletsgo12.github.io/ao-intelligence/oauth.html` is harmless if the form insists.
+  - Scopes: `https://www.googleapis.com/auth/gmail.readonly`, `https://www.googleapis.com/auth/gmail.compose`, `https://www.googleapis.com/auth/calendar.readonly`.
+- **Microsoft** (entra.microsoft.com → App registrations → New registration): supported account types *Accounts in any organizational directory and personal Microsoft accounts*. Then Authentication → Add a platform → **Single-page application**.
+  - Redirect URI: `https://aoletsgo12.github.io/ao-intelligence/oauth.html` (exactly).
+  - Delegated Microsoft Graph permissions: `User.Read`, `offline_access`, `Mail.ReadWrite`, `Calendars.Read`.
+- Paste the two client IDs into `js/config.js`, then commit and push.
+
+The backend (`backend/`) still contains IMAP, CalDAV and .ics code, but the app no longer shows any of it.
 
 The Expo/Snack copy in `ao-intelligence-app` is unchanged and still uses sample data.
 
-**Deploying the backend** is one command (see [backend/README.md](backend/README.md)): `CLOUDFLARE_API_TOKEN=… CLOUDFLARE_ACCOUNT_ID=… backend/deploy.sh`.
+The backend is only needed for Stripe and Shopify today (see [backend/README.md](backend/README.md)).
 
 ## Live site
 

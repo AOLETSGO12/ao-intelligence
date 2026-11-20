@@ -8,12 +8,16 @@
  * Step-by-step setup for each value is in README.md ("Going live").
  */
 window.AO_CONFIG = {
-  // Google (Gmail read + drafts, Google Calendar read). Browser-only sign-in via Google Identity Services.
-  // Create a "Web application" OAuth client and paste its client ID, e.g. "1234-abc.apps.googleusercontent.com".
+  // Google: ONE sign-in for Gmail (read + save drafts) and Google Calendar (read), via Google Identity Services.
+  // Create a "Web application" OAuth client. Authorised JavaScript origin: https://aoletsgo12.github.io (no path).
+  // Scopes: gmail.readonly, gmail.compose, calendar.readonly. Paste its client ID, e.g. "1234-abc.apps.googleusercontent.com".
+  // While this is empty the Google button says "Sign-in is being switched on, check back soon".
   google: { clientId: "" },
 
   // Microsoft (Outlook.com / Microsoft 365 mail + calendar via Microsoft Graph). Browser-only PKCE sign-in.
-  // Register a "Single-page application" and paste the Application (client) ID.
+  // ONE sign-in for mail and calendar. Register a "Single-page application" with the redirect URI
+  // https://aoletsgo12.github.io/ao-intelligence/oauth.html and delegated permissions User.Read, offline_access,
+  // Mail.ReadWrite, Calendars.Read. Paste the Application (client) ID. Empty = "Sign-in is being switched on".
   microsoft: { clientId: "", authority: "https://login.microsoftonline.com/common" },
 
   // Address of the deployed backend (Cloudflare Worker) that handles anything needing a secret or a server:

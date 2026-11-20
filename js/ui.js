@@ -54,7 +54,7 @@
       }
     } catch (e) { /* ignore */ }
     try { root.localStorage.removeItem(KEY); } catch (e) { /* ignore */ }
-    if (root.AOReal) { root.AOReal.clearBank(); root.AOReal.clearCalendar(); }
+    if (root.AOReal) { root.AOReal.clearBank(); root.AOReal.clearCalendar(); try { root.localStorage.removeItem(root.AOReal.REQ_KEY); } catch (e) { /* ignore */ } }
   }
   function baseUrl() {
     var p = root.location.href.split("#")[0].split("?")[0];

@@ -224,6 +224,7 @@
     mail: ["https://www.googleapis.com/auth/gmail.readonly", "https://www.googleapis.com/auth/gmail.compose"],
     calendar: ["https://www.googleapis.com/auth/calendar.readonly"]
   };
+  var GSCOPE_ALL = GSCOPE.mail.concat(GSCOPE.calendar);
   var gisPromise = null;
   function loadGis() {
     if (root.google && root.google.accounts && root.google.accounts.oauth2) return Promise.resolve();
@@ -394,9 +395,10 @@
   // ------------------------------------------------------------ Microsoft (Graph) via OAuth code flow + PKCE
   var MSCOPE = { mail: ["Mail.ReadWrite"], calendar: ["Calendars.Read"] };
   function msEndpoint(p) { return cfg().microsoft.authority.replace(/\/+$/, "") + "/oauth2/v2.0/" + p; }
-  function msScopesFor(extraKind, conns) {
+  // One Microsoft sign-in covers mail and calendar together.
+  function msScopesFor() {
     var set = { "User.Read": 1, "offline_access": 1 };
-    ["mail", "calendar"].forEach(function (k) { if (k === extraKind || (conns && conns[k] && conns[k].live && conns[k].route === "microsoft")) MSCOPE[k].forEach(function (s) { set[s] = 1; }); });
+    ["mail", "calendar"].forEach(function (k) { MSCOPE[k].forEach(function (s) { set[s] = 1; }); });
     return Object.keys(set);
   }
   function msBuildAuthUrl(scopes, state, challenge) {
@@ -566,16 +568,25 @@
     var done = function (detail) { return { key: key, providerId: session.providerId, providerName: session.providerName, detail: detail || session.detail, at: new Date().toISOString(), live: true, route: rt }; };
     try {
       if (rt === "google") {
-        var scopes = GSCOPE[key].slice();
-        var other = key === "mail" ? "calendar" : "mail";
-        var held = (loadTokens().google || {}).scope || "";
-        GSCOPE[other].forEach(function (s) { if (held.indexOf(s) !== -1) scopes.push(s); });
-        return googleToken(scopes).then(function () { return key === "mail" ? gmailProfile() : googleCalendarId(); }).then(function (who) { return done(who); });
+        // One sign-in, one consent screen, for Gmail and Google Calendar together.
+        return googleToken(GSCOPE_ALL.slice()).then(function (g) {
+          var granted = String(g.scope || "");
+          var hasMail = granted.indexOf(GSCOPE.mail[0]) !== -1, hasCal = granted.indexOf(GSCOPE.calendar[0]) !== -1;
+          if (key === "mail" ? !hasMail : !hasCal) throw new Error("Google didn’t get permission to read your " + (key === "mail" ? "Gmail" : "calendar") + ". Please try again and leave every box ticked.");
+          return Promise.all([hasMail ? gmailProfile() : null, hasCal ? googleCalendarId() : null]).then(function (r) {
+            var login = r[0] || r[1] || "";
+            var mine = done(key === "mail" ? r[0] : r[1]);
+            mine.also = [];
+            var other = key === "mail" ? "calendar" : "mail";
+            if (key === "mail" ? hasCal : hasMail) mine.also.push({ key: other, providerId: other === "mail" ? "gmail" : "google-calendar", providerName: other === "mail" ? "Gmail" : "Google Calendar", detail: login, at: mine.at, live: true, route: "google" });
+            return mine;
+          });
+        });
       }
       if (rt === "microsoft") {
         popup = openPopup();
-        return msStart(msScopesFor(key, session.allConns), popup, { key: key, providerId: session.providerId, providerName: session.providerName }).then(function () {
-          return gr("/me?$select=mail,userPrincipalName,displayName").then(function (me) { return done(me.mail || me.userPrincipalName); });
+        return msStart(msScopesFor(), popup, { key: key, providerId: session.providerId, providerName: session.providerName }).then(function () {
+          return gr("/me?$select=mail,userPrincipalName,displayName").then(function (me) { var who = me.mail || me.userPrincipalName; var mine = done(who); mine.also = [msSibling(key, who, mine.at)]; return mine; });
         });
       }
       if (rt === "truelayer" || ((rt === "stripe") && session.oauth) || ((rt === "shopify") && session.oauth)) {
@@ -600,6 +611,10 @@
     } else return Promise.reject(new Error("That connection isn’t available live yet."));
     return body.then(function (r) { setSealed(key, rt, r.sealed); return done(r.account || session.detail); });
   }
+  function msSibling(key, who, at) {
+    var other = key === "mail" ? "calendar" : "mail";
+    return { key: other, providerId: other === "mail" ? "outlook" : "outlook-calendar", providerName: other === "mail" ? "Outlook" : "Outlook calendar", detail: who, at: at, live: true, route: "microsoft" };
+  }
   /** Real-app connect (no consent sheet): build the session and run the same completion. Must be called from a click. */
   function connect(itemKey, providerId, providerName, rt, values, conns) {
     var session = { itemKey: itemKey, providerId: providerId, providerName: providerName, route: rt, allConns: conns || {}, detail: (values && (values.address || values.url || values.shop)) || "", icsOnly: !!(values && values.icsOnly) };
@@ -623,7 +638,7 @@
     var p;
     if (pend.route === "microsoft") {
       p = msExchange(params, { verifier: pend.verifier, scopes: pend.scopes }).then(function () {
-        return gr("/me?$select=mail,userPrincipalName").then(function (me) { return { key: pend.key, providerId: pend.providerId, providerName: pend.providerName, detail: me.mail || me.userPrincipalName, at: new Date().toISOString(), live: true, route: "microsoft" }; });
+        return gr("/me?$select=mail,userPrincipalName").then(function (me) { var who = me.mail || me.userPrincipalName, at = new Date().toISOString(); return { key: pend.key, providerId: pend.providerId, providerName: pend.providerName, detail: who, at: at, live: true, route: "microsoft", also: [msSibling(pend.key, who, at)] }; });
       });
     } else p = Promise.resolve(finishBackendCallback(params, sess));
     return p.then(function (conn) { return { key: pend.key, conn: conn }; });
@@ -632,10 +647,9 @@
   /** Re-run the sign-in for a route whose token ended. Must come from a click. */
   function reconnect(rt, conns) {
     if (rt === "google") {
-      var scopes = []; ["mail", "calendar"].forEach(function (k) { if (conns[k] && conns[k].live && conns[k].route === "google") scopes = scopes.concat(GSCOPE[k]); });
-      return googleToken(scopes);
+      return googleToken(GSCOPE_ALL.slice());
     }
-    if (rt === "microsoft") { var popup = openPopup(); return msStart(msScopesFor(null, conns), popup, {}); }
+    if (rt === "microsoft") { var popup = openPopup(); return msStart(msScopesFor(), popup, {}); }
     return Promise.reject(new Error("Please remove and add this connection again."));
   }
 

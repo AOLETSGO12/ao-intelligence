@@ -450,7 +450,7 @@
     if (REAL) {
       var sums = [];
       root.appendChild(card("Your data", null,
-        h("p", { class: "muted" }, "Everything this app keeps — your tasks, targets, statement, calendar file and connection details — lives only in this browser on this device. Start over erases all of it."),
+        h("p", { class: "muted" }, "Everything this app keeps — your tasks, targets, bank statement, provider requests and sign-in details — lives only in this browser on this device. Start over erases all of it."),
         h("button", { class: "btn btn-secondary btn-small", type: "button", on: { click: function () { S.confirmReset(function () { window.location.href = "start.html"; }); } } }, "Start over")));
     } else {
       root.appendChild(card("Demo controls", null,

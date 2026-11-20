@@ -224,81 +224,34 @@
   function clearCalendar() { try { root.localStorage.removeItem(CAL_KEY); } catch (e) { /* ignore */ } }
 
   // ------------------------------------------------------------------ guides
+  // Email and calendar connect by provider sign-in only (Google or Microsoft). Other providers are "coming soon":
+  // people can tell us they need one, and the request is kept on this device.
   var MAIL = [
-    { id: "gmail", name: "Gmail", host: "imap.gmail.com", kind: "imap", oauth: "google",
-      steps: [
-        { t: "Turn on 2-Step Verification for your Google account (skip if it’s already on).", href: "https://myaccount.google.com/signinoptions/twosv", link: "Open 2-Step Verification" },
-        { t: "Create an app password called “AO Intelligence”. Google shows a 16-letter code.", href: "https://myaccount.google.com/apppasswords", link: "Open App passwords" },
-        { t: "Paste your Gmail address and that code below. Spaces in the code don’t matter." } ],
-      note: "School or work Google accounts may have app passwords switched off by their administrator. If you can’t see “App passwords”, that’s why." },
-    { id: "outlook", name: "Outlook.com / Hotmail / Live", host: "outlook.office365.com", kind: "microsoft",
-      note: "Microsoft stopped allowing passwords for Outlook.com and Microsoft 365 mail in September 2024 — app passwords no longer work for them. Outlook mail connects with “Sign in with Microsoft” instead." },
-    { id: "m365", name: "Microsoft 365 (work or school)", host: "outlook.office365.com", kind: "microsoft",
-      note: "Work and school mailboxes also need “Sign in with Microsoft”, and an administrator may need to allow it." },
-    { id: "icloud-mail", name: "iCloud Mail", host: "imap.mail.me.com", kind: "imap",
-      steps: [
-        { t: "Sign in to your Apple Account and open Sign-In and Security → App-Specific Passwords.", href: "https://account.apple.com/account/manage", link: "Open Apple Account" },
-        { t: "Create a password called “AO Intelligence” and copy it (it looks like abcd-efgh-ijkl-mnop)." },
-        { t: "Use your iCloud address (ending @icloud.com, @me.com or @mac.com) and that password." } ] },
-    { id: "yahoo", name: "Yahoo Mail", host: "imap.mail.yahoo.com", kind: "imap",
-      steps: [
-        { t: "Open Yahoo Account security and choose “Generate app password”.", href: "https://login.yahoo.com/account/security", link: "Open Yahoo security" },
-        { t: "Name it “AO Intelligence” and copy the password it shows." },
-        { t: "Paste your Yahoo address and that password below." } ] },
-    { id: "aol", name: "AOL Mail", host: "imap.aol.com", kind: "imap",
-      steps: [
-        { t: "Open AOL account security and generate an app password.", href: "https://login.aol.com/account/security", link: "Open AOL security" },
-        { t: "Name it “AO Intelligence” and copy the password." },
-        { t: "Paste your AOL address and that password below." } ] },
-    { id: "zoho-mail", name: "Zoho Mail", host: "imap.zoho.com", kind: "imap",
-      steps: [
-        { t: "In Zoho Mail settings, switch on IMAP access (Settings → Mail Accounts → IMAP Access).", href: "https://mail.zoho.com/zm/#settings/all/mailaccounts", link: "Open Zoho Mail settings" },
-        { t: "Create an application-specific password.", href: "https://accounts.zoho.com/home#security/app_password", link: "Open Zoho security" },
-        { t: "Paste your Zoho address and that password. If your account is in Europe the server is imap.zoho.eu." } ] },
-    { id: "fastmail", name: "Fastmail", host: "imap.fastmail.com", kind: "imap",
-      steps: [
-        { t: "Open Fastmail Settings → Privacy & Security → Integrations and choose “New app password”.", href: "https://app.fastmail.com/settings/security/integrations", link: "Open Fastmail" },
-        { t: "Give it Mail (IMAP) access, name it “AO Intelligence” and copy the password." },
-        { t: "Paste your Fastmail address and that password below." } ] },
-    { id: "proton", name: "Proton Mail", host: "", kind: "none",
-      note: "Proton Mail only allows other apps in through Proton Bridge, which has to run on your own computer. That means it can’t be connected from here. You can forward Proton mail to another address and connect that instead." },
-    { id: "imap", name: "Other email provider", host: "", kind: "imap",
-      steps: [
-        { t: "Find your provider’s “IMAP settings” help page and note the incoming server name (for example imap.example.co.uk). We use the secure port 993." },
-        { t: "If your provider offers “app passwords”, create one called “AO Intelligence”. Otherwise your normal email password is used." },
-        { t: "Fill in your address, password and server below." } ] },
+    { id: "gmail", name: "Gmail (Google)", oauth: "google" },
+    { id: "outlook", name: "Outlook, Hotmail or Microsoft 365", oauth: "microsoft" },
+    { id: "icloud-mail", name: "iCloud Mail", soon: true },
+    { id: "yahoo", name: "Yahoo Mail", soon: true },
+    { id: "aol", name: "AOL Mail", soon: true },
+    { id: "zoho-mail", name: "Zoho Mail", soon: true },
+    { id: "fastmail", name: "Fastmail", soon: true },
+    { id: "other-mail", name: "Another email provider", soon: true, other: true },
   ];
   var CAL = [
-    { id: "google-calendar", name: "Google Calendar", kind: "ics", oauth: "google",
-      steps: [
-        { t: "On a computer, open Google Calendar settings and click the calendar you want under “Settings for my calendars”.", href: "https://calendar.google.com/calendar/u/0/r/settings", link: "Open Calendar settings" },
-        { t: "Scroll to “Integrate calendar” and copy “Secret address in iCal format” (a long link ending .ics)." },
-        { t: "Paste it below. Keep it private — anyone with the link can see your calendar. You can reset it in the same place." } ],
-      note: "The Google Calendar phone app can’t show this link — use a computer. Some work or school accounts hide it." },
-    { id: "outlook-calendar", name: "Outlook.com / Microsoft 365", kind: "ics", oauth: "microsoft",
-      steps: [
-        { t: "Open Outlook calendar settings → Shared calendars → “Publish a calendar”.", href: "https://outlook.live.com/calendar/0/options/calendar/SharedCalendars", link: "Open Outlook.com settings" },
-        { t: "Pick your calendar, choose “Can view all details”, and press Publish." },
-        { t: "Copy the ICS link (not the HTML one) and paste it below. For a work account use outlook.office.com instead — your administrator may have turned publishing off." } ] },
-    { id: "icloud-calendar", name: "iCloud Calendar", kind: "ics",
-      steps: [
-        { t: "In the Calendar app (Mac) or iCloud.com, share your calendar and tick “Public Calendar”.", href: "https://www.icloud.com/calendar", link: "Open iCloud Calendar" },
-        { t: "Copy the link it shows (it starts webcal://) and paste it below." },
-        { t: "Prefer not to make it public? Choose “CalDAV” below and use an app-specific password instead (server https://caldav.icloud.com)." } ] },
-    { id: "zoho-calendar", name: "Zoho Calendar", kind: "ics",
-      steps: [
-        { t: "In Zoho Calendar, open the calendar’s Share options and copy its private iCal (.ics) link.", href: "https://calendar.zoho.com", link: "Open Zoho Calendar" },
-        { t: "Paste it below." } ] },
-    { id: "ics", name: "Any calendar link (.ics / webcal)", kind: "ics",
-      steps: [ { t: "Most calendars can publish a private link ending .ics (sometimes called “iCal”, “subscribe” or “webcal”). Copy it and paste it below." } ] },
-    { id: "caldav", name: "CalDAV (advanced)", kind: "caldav",
-      steps: [ { t: "Enter your calendar server’s CalDAV address, your username and an app password. Examples: iCloud https://caldav.icloud.com · Fastmail https://caldav.fastmail.com/dav/ · Zoho https://calendar.zoho.com/caldav/" } ] },
-    { id: "calendly", name: "Calendly", kind: "calendly",
-      steps: [ { t: "In Calendly open Integrations → API & Webhooks and generate a personal access token.", href: "https://calendly.com/integrations/api_webhooks", link: "Open Calendly" }, { t: "Paste the token below. We only read your booked meetings." } ] },
-    { id: "file", name: "Upload a calendar file (.ics)", kind: "file",
-      steps: [ { t: "Export your calendar as an .ics file (Google: Settings → Import & export → Export. Outlook: Settings → Calendar → Shared calendars → Publish, or File → Save Calendar). Choose it below." },
-               { t: "The file is read in your browser and stays on this device. It’s a snapshot — upload a new one to refresh it, or use a calendar link for a live view." } ] },
+    { id: "google-calendar", name: "Google Calendar", oauth: "google" },
+    { id: "outlook-calendar", name: "Outlook or Microsoft 365 calendar", oauth: "microsoft" },
+    { id: "icloud-calendar", name: "iCloud Calendar", soon: true },
+    { id: "zoho-calendar", name: "Zoho Calendar", soon: true },
+    { id: "other-calendar", name: "Another calendar", soon: true, other: true },
   ];
+  var REQ_KEY = "ao-provider-requests-v1";
+  function requests() { var r = readJson(REQ_KEY); return Array.isArray(r) ? r : []; }
+  function hasRequest(id) { return requests().some(function (x) { return x.id === id; }); }
+  /** Remember "I'd use this" on this device. Returns false if the browser wouldn't save it. */
+  function saveRequest(kind, id, name, note) {
+    var list = requests().filter(function (x) { return x.id !== id; });
+    list.push({ kind: kind, id: id, name: name, note: String(note || "").slice(0, 200), at: new Date().toISOString() });
+    return writeJson(REQ_KEY, list);
+  }
   var BANK_TIPS = {
     "monzo": "Monzo: in the app go to Account → Statements, or sign in at monzo.com and open Statements, then choose Export → CSV.",
     "starling-bank": "Starling: in the app go to Account → Statements, pick the dates and choose CSV.",
@@ -321,6 +274,6 @@
     parseStatement: parseStatement, parseCsv: parseCsv, parseOfx: parseOfx, parseDate: parseDate, parseAmount: parseAmount,
     mergeBank: mergeBank, saveBank: saveBank, localBank: localBank, clearBank: clearBank,
     saveCalendarFile: saveCalendarFile, localCalendar: localCalendar, clearCalendar: clearCalendar, eventsFromIcs: eventsFromIcs,
-    MAIL: MAIL, CAL: CAL, BANK_TIPS: BANK_TIPS, guessCategory: guessCategory, BANK_KEY: BANK_KEY, CAL_KEY: CAL_KEY,
+    MAIL: MAIL, CAL: CAL, requests: requests, hasRequest: hasRequest, saveRequest: saveRequest, REQ_KEY: REQ_KEY, BANK_TIPS: BANK_TIPS, guessCategory: guessCategory, BANK_KEY: BANK_KEY, CAL_KEY: CAL_KEY,
   };
 })(typeof window !== "undefined" ? window : globalThis);

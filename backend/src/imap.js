@@ -98,9 +98,19 @@ export class ImapClient {
   async login(user, pass) {
     // SASL PLAIN handles any characters in the password; fall back to LOGIN for servers that lack it.
     const plain = btoa(String.fromCharCode(...te.encode(`\0${user}\0${pass}`)));
-    let r = await this.command("AUTHENTICATE PLAIN", async () => { await this.write(plain + "\r\n"); });
-    if (r.status !== "OK") r = await this.command(`LOGIN ${quote(user)} ${quote(pass)}`);
-    if (r.status !== "OK") throw new HttpError(401, "The mail server didn’t accept those details. Check the address and app password, and that IMAP is switched on for the account.", "login");
+    const refused = new HttpError(401, "The mail server didn’t accept those details. Check the address and app password, and that IMAP is switched on for the account.", "login");
+    let r;
+    try {
+      r = await this.command("AUTHENTICATE PLAIN", async () => { await this.write(plain + "\r\n"); });
+      // A NO that says the details are wrong ends here (some servers hang up after it). Any other refusal means PLAIN
+      // isn't supported, so try the older LOGIN command.
+      if (r.status !== "OK" && !/AUTHENTICATIONFAILED|AUTHORIZATIONFAILED|invalid credentials|ALERT|application-specific/i.test(r.text)) r = await this.command(`LOGIN ${quote(user)} ${quote(pass)}`);
+    } catch (e) {
+      // Real servers (Gmail in particular) often hang up right after refusing a login on a real account.
+      if (e instanceof HttpError && (e.code === "unreachable" || /closed the connection|dropped/.test(e.message))) throw refused;
+      throw e;
+    }
+    if (r.status !== "OK") throw refused;
   }
   async logout() { try { await this.write("A999 LOGOUT\r\n"); } catch (e) { /* ignore */ } try { this.sock.close(); } catch (e) { /* ignore */ } }
 }

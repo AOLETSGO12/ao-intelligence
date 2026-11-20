@@ -221,3 +221,5 @@
 @media (max-width: 480px) { .num-row { grid-template-columns: 1fr 1fr; } .num-row .j-field:last-child { grid-column: 1 / -1; } }
 .j-panel select, #real-bank { width: 100%; min-height: 48px; font-size: 16px; }
 [hidden] { display: none !important; }
+
+.j-soon{color:var(--muted,#6b7280);font-weight:400;font-size:.85em}

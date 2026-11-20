@@ -37,7 +37,11 @@
   L.finishRedirect(params).then(function (r) {
     var st = S.load();
     if (st.selected.indexOf(r.key) === -1) st.selected.push(r.key);
-    st.connected[r.key] = r.conn; st.skipped = st.skipped.filter(function (k) { return k !== r.key; });
+    [r.conn].concat((r.conn && r.conn.also) || []).forEach(function (c) {
+      if (!c) return;
+      if (st.selected.indexOf(c.key) === -1) st.selected.push(c.key);
+      var cc = Object.assign({}, c); delete cc.also; st.connected[c.key] = cc; st.skipped = st.skipped.filter(function (k) { return k !== c.key; });
+    });
     S.save(st);
     window.location.replace(st.step === "app" ? "app.html#connections" : "start.html");
   }).catch(function (e) {

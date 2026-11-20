@@ -419,9 +419,12 @@
     return btn;
   }
   function finishReal(conn) {
-    var key = conn.key;
-    if (state.selected.indexOf(key) === -1) state.selected.push(key);
-    state.connected[key] = conn; state.skipped = state.skipped.filter(function (k) { return k !== key; });
+    var all = [conn].concat(conn.also || []);
+    all.forEach(function (c) {
+      var cc = Object.assign({}, c); delete cc.also;
+      if (state.selected.indexOf(cc.key) === -1) state.selected.push(cc.key);
+      state.connected[cc.key] = cc; state.skipped = state.skipped.filter(function (k) { return k !== cc.key; });
+    });
     rui.reupload = false; rui.preview = null; save(); render();
   }
   function needBackend(what) {
@@ -433,7 +436,7 @@
   }
   function serviceNotice() {
     if (!L) return null;
-    if (!L.configured().backend) return h("div", { class: "j-notice", role: "note" }, h("strong", null, "Connection service not switched on yet. "), "Email links, calendar links and Stripe go through a small AO service that hasn’t been set up for this site. Bank statements and calendar files still work without it.");
+    if (!L.configured().backend) return h("div", { class: "j-notice", role: "note" }, h("strong", null, "Connection service not switched on yet. "), "Stripe and Shopify go through a small AO service that hasn’t been set up for this site. Bank statements work without it.");
     if (rui.capsKnown && !rui.caps) return h("div", { class: "j-notice is-warn", role: "alert" }, h("strong", null, "Can’t reach the connection service. "), "Check your internet and reload. If it keeps happening the service may be down.");
     return null;
   }
@@ -446,7 +449,7 @@
     return h("div", { class: "j-results j-results-open", role: "listbox", "aria-label": "Choose one" }, list.map(function (p) {
       var on = rui.provider === p.id;
       return h("button", { class: "j-result" + (on ? " is-on" : ""), type: "button", role: "option", "aria-selected": on ? "true" : "false", on: { click: function () { var y = window.pageYOffset; rui.provider = p.id; rui.error = ""; onPick && onPick(p); render(); window.scrollTo(0, y); var pn = document.getElementById("real-panel"); if (pn && pn.scrollIntoView) { try { pn.scrollIntoView({ block: "start", behavior: "smooth" }); } catch (x) { pn.scrollIntoView(); } } } } },
-        h("span", null, p.name), on ? h("span", { class: "j-result-tick", "aria-hidden": "true" }, "✓") : null);
+        h("span", null, p.name, p.soon ? h("small", { class: "j-soon" }, " · coming soon") : null), on ? h("span", { class: "j-result-tick", "aria-hidden": "true" }, "✓") : null);
     }));
   }
   function fileInput(accept, onFile, label) {
@@ -462,96 +465,59 @@
     return h("label", { class: "j-filebtn btn btn-secondary j-wide", for: "real-file" }, label || "Choose a file", inp);
   }
 
-  // ---------------------------------------------------------------- mail
-  function realMail(children) {
-    var g = R.MAIL.filter(function (x) { return x.id === rui.provider; })[0];
-    children.push(h("div", { class: "j-field" }, h("label", { id: "pick-label" }, "Which email do you use?"), providerList(R.MAIL)));
-    if (!g) { children.push(h("p", { class: "j-hint" }, "Choose your email provider above and we’ll show you exactly what to do.")); return; }
+  // ---------------------------------------------------------------- mail and calendar: provider sign-in only
+  var SWITCHING_ON = "Sign-in is being switched on, check back soon.";
+  function oauthPanel(provider, what, itemKey, children) {
     var panel = h("div", { class: "j-panel", id: "real-panel" });
-    panel.appendChild(h("h2", { class: "j-sub" }, g.name));
-    if (g.kind === "none") panel.appendChild(h("div", { class: "j-notice is-warn" }, g.note));
-    else {
-      if (g.kind === "microsoft") {
-        panel.appendChild(h("div", { class: "j-notice" }, g.note));
-        if (L && L.configured().microsoft) {
-          panel.appendChild(h("p", { class: "j-hint" }, "You’ll sign in with Microsoft in a small window. We ask only to read your mail and save reply drafts — we can’t send."));
-          panel.appendChild(actionButton("Sign in with Microsoft", function () { return L.connect("mail", g.id, g.name, "microsoft", {}, state.connected); }));
-        } else {
-          panel.appendChild(h("div", { class: "j-notice is-warn" }, h("strong", null, "One-time setup needed. "), "Signing in with Microsoft needs a free Microsoft app registration for this site (about 10 minutes, no approval). ", h("a", { href: "https://github.com/AOLETSGO12/ao-intelligence#2-microsoft--outlookcom--microsoft-365-mail-and-calendar", target: "_blank", rel: "noopener noreferrer", class: "j-extlink" }, "See the steps ↗")));
-        }
-        panel.appendChild(h("details", { class: "j-details" }, h("summary", null, "Can’t use that? Forward Outlook mail to another address instead"),
-          h("ol", { class: "j-steps" },
-            h("li", null, "Open Outlook mail forwarding settings and turn on forwarding to a Gmail, iCloud or Fastmail address you own. ", h("a", { href: "https://outlook.live.com/mail/0/options/mail/forwarding", target: "_blank", rel: "noopener noreferrer", class: "j-extlink" }, "Open forwarding ↗")),
-            h("li", null, "Choose that provider in the list above and connect it with an app password."))));
-      } else {
-        panel.appendChild(guideSteps(g));
-        if (g.note) panel.appendChild(h("p", { class: "j-hint" }, g.note));
-        var isOther = g.id === "imap";
-        panel.appendChild(textInput("real-addr", "Your email address", "address", { type: "email", inputmode: "email", autocomplete: "email", placeholder: "you@example.com", value: rui.vals.address || (state.account ? state.account.email : "") }));
-        panel.appendChild(textInput("real-pass", g.id === "imap" ? "Password or app password" : "App password", "password", { type: "password", placeholder: g.id === "gmail" ? "16-letter code" : "", hint: "Sent over an encrypted connection, sealed, and kept only in this browser. Never your normal password if the provider offers app passwords." }));
-        var host = textInput("real-host", "Mail server (IMAP)", "host", { value: rui.vals.host != null ? rui.vals.host : g.host, placeholder: "imap.example.com", hint: "Port 993 (SSL). " + (isOther ? "Find it on your provider’s help page." : "Already filled in — only change it if your provider says otherwise.") });
-        panel.appendChild(isOther ? host : h("details", { class: "j-details" }, h("summary", null, "Server settings"), host));
-        panel.appendChild(errBox());
-        panel.appendChild(actionButton("Connect " + (isOther ? "my email" : g.name), function () {
-          var v = rui.vals, addr = String(v.address || "").trim(), pw = String(v.password || ""), hostV = String(v.host || g.host || "").trim();
-          if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(addr)) return Promise.reject(new Error("Please enter your email address."));
-          if (!pw.trim()) return Promise.reject(new Error("Please paste the app password (see step " + (g.steps ? g.steps.length - 1 : 1) + " above)."));
-          if (!hostV) return Promise.reject(new Error("Please enter your mail server, for example imap.example.com."));
-          if (g.id === "gmail") pw = pw.replace(/\s+/g, "");
-          return needBackend("Email can’t be read directly from a web page, so it has to go through the service.").then(function () {
-            return L.connect("mail", g.id, isOther ? "Email (" + addr.split("@")[1] + ")" : g.name, "imap", { address: addr, password: pw, host: hostV }, state.connected);
-          });
-        }));
-        if (g.oauth === "google" && L && L.configured().google) {
-          panel.appendChild(h("p", { class: "j-or" }, "or"));
-          panel.appendChild(actionButton("Sign in with Google instead", function () { return L.connect("mail", "gmail", "Gmail", "google", {}, state.connected); }, "btn-secondary"));
-        }
-      }
-    }
+    panel.appendChild(h("h2", { class: "j-sub" }, provider.name));
+    var rt = provider.oauth, who = rt === "google" ? "Google" : "Microsoft";
+    var ready = !!(L && L.configured()[rt]);
+    if (ready && rt === "google" && L._preload) L._preload().catch(function () {});
+    panel.appendChild(h("ol", { class: "j-steps" },
+      h("li", null, "Press Connect — " + who + "’s own sign-in page opens."),
+      h("li", null, "Sign in and press Allow."),
+      h("li", null, "That’s it — " + (rt === "google" ? "Gmail and Google Calendar are both connected in one go." : "Outlook mail and calendar are both connected in one go."))));
+    panel.appendChild(h("p", { class: "j-hint" }, "We ask only to " + what + " We can’t send mail, and you can disconnect any time."));
+    if (!ready) panel.appendChild(h("div", { class: "j-notice", role: "note" }, h("strong", null, "Almost ready. "), SWITCHING_ON));
+    panel.appendChild(errBox());
+    var label = itemKey === "mail" ? (rt === "google" ? "Connect Gmail" : "Connect Outlook") : (rt === "google" ? "Connect Google Calendar" : "Connect Outlook calendar");
+    panel.appendChild(actionButton(label, function () {
+      if (!ready) return Promise.reject(new Error(SWITCHING_ON));
+      return L.connect(itemKey, provider.id, provider.name, rt, {}, state.connected);
+    }));
     children.push(panel);
   }
-
-  // ---------------------------------------------------------------- calendar
+  /** "Coming soon" for a provider, with a button that remembers on this device that the person needs it. */
+  function soonPanel(provider, kind, children) {
+    var panel = h("div", { class: "j-panel", id: "real-panel" });
+    panel.appendChild(h("h2", { class: "j-sub" }, provider.name));
+    panel.appendChild(h("div", { class: "j-notice", role: "note" }, h("strong", null, "Coming soon. "), provider.other ? "Tell us which one you use and we’ll bring it forward." : provider.name + " isn’t available yet."));
+    if (provider.other) panel.appendChild(textInput("real-which", "Which provider do you use?", "which", { placeholder: kind === "mail" ? "e.g. Proton, a work server…" : "e.g. Fastmail, a work calendar…" }));
+    var asked = R.hasRequest(provider.id);
+    panel.appendChild(errBox());
+    var btn = h("button", { class: "btn btn-secondary j-wide", type: "button", id: "real-need" }, asked ? "Thanks — noted ✓" : (provider.other ? "Tell us which provider" : "Let us know you need this"));
+    btn.addEventListener("click", function () {
+      var note = provider.other ? String(rui.vals.which || "").trim() : "";
+      if (provider.other && !note) { showError("Please type which provider you use."); return; }
+      showError("");
+      if (!R.saveRequest(kind, provider.id, note || provider.name, note)) { showError("This browser wouldn’t let us save that on this device."); return; }
+      rui.error = ""; render();
+    });
+    panel.appendChild(btn);
+    if (asked) panel.appendChild(h("p", { class: "j-hint", role: "status" }, "Saved on this device. Nothing was sent."));
+    children.push(panel);
+  }
+  function realMail(children) {
+    var g = R.MAIL.filter(function (x) { return x.id === rui.provider; })[0];
+    children.push(h("div", { class: "j-field" }, h("label", { id: "pick-label" }, "Which email do you use?"), providerList(R.MAIL, null, "mail")));
+    if (!g) { children.push(h("p", { class: "j-hint" }, "Choose your email provider above.")); return; }
+    if (g.soon) soonPanel(g, "mail", children); else oauthPanel(g, "read your recent mail and save reply drafts.", "mail", children);
+  }
   function realCalendar(children) {
     var g = R.CAL.filter(function (x) { return x.id === rui.provider; })[0];
-    children.push(h("div", { class: "j-field" }, h("label", { id: "pick-label" }, "Which calendar do you use?"), providerList(R.CAL)));
-    if (!g) { children.push(h("p", { class: "j-hint" }, "Choose your calendar above and we’ll show you exactly what to do.")); return; }
-    var panel = h("div", { class: "j-panel", id: "real-panel" });
-    panel.appendChild(h("h2", { class: "j-sub" }, g.name));
-    panel.appendChild(guideSteps(g));
-    if (g.note) panel.appendChild(h("p", { class: "j-hint" }, g.note));
-    if (g.kind === "file") {
-      panel.appendChild(errBox());
-      panel.appendChild(fileInput(".ics,text/calendar", function (text, f) {
-        var n = R.saveCalendarFile(text, L ? L.config().timezone : "", f.name);
-        finishReal({ key: "calendar", providerId: "file", providerName: "Calendar file", detail: f.name + " · " + n + " upcoming event" + (n === 1 ? "" : "s"), at: new Date().toISOString(), live: true, route: "local" });
-      }, "Choose an .ics file"));
-    } else {
-      if (g.kind === "ics") panel.appendChild(textInput("real-url", "Calendar link", "url", { placeholder: "https://… .ics  or  webcal://…", hint: "Keep it private: anyone with this link can see the calendar." }));
-      if (g.kind === "caldav") { panel.appendChild(textInput("real-url", "CalDAV server address", "url", { placeholder: "https://caldav.example.com/" })); panel.appendChild(textInput("real-user", "Username", "username")); panel.appendChild(textInput("real-cpass", "App password", "password", { type: "password" })); }
-      if (g.kind === "calendly") panel.appendChild(textInput("real-token", "Calendly personal access token", "token", { type: "password" }));
-      panel.appendChild(errBox());
-      panel.appendChild(actionButton("Connect " + g.name, function () {
-        var v = rui.vals;
-        if (g.kind === "ics") {
-          var u = String(v.url || "").trim();
-          if (!/^(webcal:|https?:)\/\//i.test(u)) return Promise.reject(new Error("Please paste the calendar link (it starts with https:// or webcal://)."));
-          return needBackend("You can upload a calendar file instead (choose “Upload a calendar file” above) — it works without the service.").then(function () { return L.connect("calendar", g.id, g.name, "caldav", { url: u, icsOnly: true }, state.connected); });
-        }
-        if (g.kind === "caldav") {
-          if (!String(v.url || "").trim() || !String(v.username || "").trim() || !String(v.password || "")) return Promise.reject(new Error("Please fill in the server address, username and app password."));
-          return needBackend("").then(function () { return L.connect("calendar", "caldav", g.name, "caldav", { url: String(v.url).trim(), username: String(v.username).trim(), password: v.password }, state.connected); });
-        }
-        if (g.kind === "calendly") {
-          if (!String(v.token || "").trim()) return Promise.reject(new Error("Please paste your Calendly access token."));
-          return needBackend("").then(function () { return L.connect("calendar", "calendly", "Calendly", "calendly", { token: String(v.token).trim() }, state.connected); });
-        }
-        return Promise.reject(new Error("That isn’t available yet."));
-      }));
-    }
-    if (g.oauth === "google" && L && L.configured().google) { panel.appendChild(h("p", { class: "j-or" }, "or")); panel.appendChild(actionButton("Sign in with Google instead", function () { return L.connect("calendar", "google-calendar", "Google Calendar", "google", {}, state.connected); }, "btn-secondary")); }
-    if (g.oauth === "microsoft" && L && L.configured().microsoft) { panel.appendChild(h("p", { class: "j-or" }, "or")); panel.appendChild(actionButton("Sign in with Microsoft instead", function () { return L.connect("calendar", "outlook-calendar", "Outlook calendar", "microsoft", {}, state.connected); }, "btn-secondary")); }
-    children.push(panel);
+    children.push(h("div", { class: "j-field" }, h("label", { id: "pick-label" }, "Which calendar do you use?"), providerList(R.CAL, null, "calendar")));
+    if (!g) { children.push(h("p", { class: "j-hint" }, "Choose your calendar above.")); return; }
+    if (g.soon) soonPanel(g, "calendar", children); else oauthPanel(g, "read your calendar events.", "calendar", children);
   }
 
   // ---------------------------------------------------------------- bank statement
@@ -636,8 +602,7 @@
     if (!single) children.push(progress());
     children.push(h("p", { class: "j-eyebrow" }, single ? "Add a connection" : "Connect " + (E.queue(state).indexOf(key) + 1) + " of " + E.queue(state).length));
     children.push(h("h1", null, conn && !rui.reupload ? item.title + " connected" : (key === "mail" ? "Connect your email" : key === "calendar" ? "Connect your calendar" : key === "bank" ? "Add your bank statement" : "Connect " + item.title)));
-    children.push(h("div", { id: "real-notice" }, serviceNotice()));
-    checkCaps();
+    if (key.indexOf("sales:") === 0) { children.push(h("div", { id: "real-notice" }, serviceNotice())); checkCaps(); }
 
     if (conn && !rui.reupload) {
       children.push(h("div", { class: "j-success", role: "status" }, h("span", { class: "j-success-tick", "aria-hidden": "true" }, "✓"),

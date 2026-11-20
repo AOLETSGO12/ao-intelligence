@@ -43,7 +43,7 @@ async function open(browser, { config, state, mocks, base }) {
       if (!sessionStorage.getItem("__seeded")) {
         sessionStorage.setItem("__seeded", "1");
         localStorage.setItem("ao-mode", "demo");
-        if (config) localStorage.setItem("ao-config-override", JSON.stringify(config));
+        localStorage.setItem("ao-config-override", JSON.stringify(Object.assign({ backendUrl: "" }, config || {})));
         if (state) localStorage.setItem("ao-intelligence-journey-v2", state);
       }
     } catch (e) { /* ignore */ }
@@ -192,7 +192,7 @@ async function main() {
     ok(url.host === "login.microsoftonline.com" && url.pathname === "/common/oauth2/v2.0/authorize", "opens the Microsoft sign-in page");
     ok(url.searchParams.get("client_id") === "00000000-aaaa-bbbb-cccc-111111111111" && url.searchParams.get("code_challenge_method") === "S256" && url.searchParams.get("code_challenge").length === 43, "PKCE S256 challenge + client id");
     ok(url.searchParams.get("redirect_uri") === base + "/oauth.html", "redirect URI is <site>/oauth.html");
-    ok(url.searchParams.get("scope") === "User.Read offline_access Mail.ReadWrite", "minimal scopes: " + url.searchParams.get("scope"));
+    ok(url.searchParams.get("scope") === "User.Read offline_access Mail.ReadWrite Calendars.Read", "one sign-in, minimal scopes (mail + calendar): " + url.searchParams.get("scope"));
     await deliver(page, "?code=CODE123&state=" + encodeURIComponent(url.searchParams.get("state")));
     await waitText(page, "Live — showing your real data");
     ok(calls.tokenBodies[0].includes("grant_type=authorization_code") && calls.tokenBodies[0].includes("code_verifier=") && calls.tokenBodies[0].includes("code=CODE123"), "exchanged the code with the PKCE verifier (no client secret)");
