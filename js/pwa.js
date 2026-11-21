@@ -1,6 +1,7 @@
 /**
  * Progressive Web App helpers: service worker registration, install prompt,
- * an iOS “Add to Home Screen” sheet, and a standalone tab bar.
+ * and an iOS “Add to Home Screen” sheet. The Home Screen app is the same
+ * product as Safari — no separate layout, tab bar or demo pages.
  */
 (function () {
   "use strict";
@@ -8,7 +9,7 @@
   if ("serviceWorker" in navigator) {
     window.addEventListener("load", function () {
       navigator.serviceWorker.register("sw.js", { scope: "./", updateViaCache: "none" }).catch(function () {
-        /* Registration can fail on file:// pages; ignore in the prototype. */
+        /* Registration can fail on file:// pages; ignore. */
       });
     });
   }
@@ -20,7 +21,8 @@
   }
 
   function isStandalone() {
-    return window.matchMedia("(display-mode: standalone)").matches ||
+    return (window.AOHandoff && window.AOHandoff.isStandalone && window.AOHandoff.isStandalone()) ||
+      window.matchMedia("(display-mode: standalone)").matches ||
       window.navigator.standalone === true;
   }
 
@@ -28,6 +30,7 @@
   var buttons = [];
 
   function showButtons() {
+    if (isStandalone()) return;
     buttons.forEach(function (btn) {
       btn.hidden = false;
       btn.removeAttribute("hidden");
@@ -40,6 +43,11 @@
     });
   }
 
+  function hasDashboards() {
+    try { return !!(window.AOStore && window.AOStore.hasDashboards && window.AOStore.hasDashboards()); }
+    catch (e) { return false; }
+  }
+
   function ensureSheet() {
     var existing = document.getElementById("install-sheet");
     if (existing) return existing;
@@ -50,12 +58,14 @@
     backdrop.setAttribute("role", "presentation");
     backdrop.innerHTML =
       '<div class="install-sheet" role="dialog" aria-modal="true" aria-labelledby="install-sheet-title" tabindex="-1">' +
-        "<h2 id=\"install-sheet-title\">Install AO Intelligence</h2>" +
-        "<p>On iPhone and iPad, add this preview to your Home Screen from Safari.</p>" +
+        "<h2 id=\"install-sheet-title\">Use on your Home Screen</h2>" +
+        "<p>The Home Screen app is the same as this one in Safari. On iPhone, Safari keeps its data separately, so you’ll use a short code to bring your dashboards across.</p>" +
+        '<div id="install-code-wrap" class="handoff-block"></div>' +
         '<ol class="install-steps">' +
-          "<li><span class=\"step-num\" aria-hidden=\"true\">1</span><span>Tap the <strong>Share</strong> button — the square with an arrow pointing up — at the bottom of Safari.</span></li>" +
-          "<li><span class=\"step-num\" aria-hidden=\"true\">2</span><span>Scroll the list and tap <strong>Add to Home Screen</strong>.</span></li>" +
-          "<li><span class=\"step-num\" aria-hidden=\"true\">3</span><span>Tap <strong>Add</strong> in the top right. The app icon will appear on your Home Screen.</span></li>" +
+          "<li><span class=\"step-num\" aria-hidden=\"true\">1</span><span>Create a code above, if you already use AO Intelligence in Safari.</span></li>" +
+          "<li><span class=\"step-num\" aria-hidden=\"true\">2</span><span>Tap the <strong>Share</strong> button — the square with an arrow pointing up — at the bottom of Safari.</span></li>" +
+          "<li><span class=\"step-num\" aria-hidden=\"true\">3</span><span>Scroll the list and tap <strong>Add to Home Screen</strong>, then tap <strong>Add</strong>.</span></li>" +
+          "<li><span class=\"step-num\" aria-hidden=\"true\">4</span><span>Open the new icon and choose <strong>Already set up in Safari?</strong> to type your code.</span></li>" +
         "</ol>" +
         '<div class="modal-actions">' +
           '<button class="btn btn-primary" type="button" data-sheet-close>Got it</button>' +
@@ -83,9 +93,63 @@
     return backdrop;
   }
 
+  function fillCodeWrap() {
+    var wrap = document.getElementById("install-code-wrap");
+    if (!wrap) return;
+    wrap.innerHTML = "";
+    if (isStandalone() || !window.AOHandoff) return;
+    if (!hasDashboards()) {
+      wrap.innerHTML = "<p class=\"handoff-note\">If you haven’t set up a dashboard yet, add the app first, then open it and follow Get started.</p>";
+      return;
+    }
+    var status = document.createElement("p");
+    status.className = "handoff-note";
+    status.id = "install-code-status";
+    var btn = document.createElement("button");
+    btn.className = "btn btn-secondary";
+    btn.type = "button";
+    btn.textContent = "Create a code";
+    var codeEl = document.createElement("p");
+    codeEl.className = "handoff-code";
+    codeEl.hidden = true;
+    var copyBtn = document.createElement("button");
+    copyBtn.className = "btn btn-ghost btn-small";
+    copyBtn.type = "button";
+    copyBtn.textContent = "Copy code";
+    copyBtn.hidden = true;
+    btn.addEventListener("click", function () {
+      btn.disabled = true;
+      btn.textContent = "Creating a code…";
+      status.textContent = "";
+      window.AOHandoff.createCode().then(function (r) {
+        codeEl.hidden = false;
+        codeEl.textContent = r.code;
+        copyBtn.hidden = false;
+        copyBtn._code = r.code;
+        status.textContent = "This code works for 10 minutes and can be used once. Add the app to your Home Screen, open it, and type the code there.";
+        btn.textContent = "Create a new code";
+        btn.disabled = false;
+      }).catch(function (e) {
+        status.textContent = (e && e.message) || "That didn’t work. Please try again.";
+        btn.disabled = false;
+        btn.textContent = "Create a code";
+      });
+    });
+    copyBtn.addEventListener("click", function () {
+      var c = copyBtn._code;
+      if (!c || !window.AOStore || !window.AOStore.copyText) return;
+      window.AOStore.copyText(c).then(function () { copyBtn.textContent = "Copied"; }, function () { copyBtn.textContent = "Copy code"; });
+    });
+    wrap.appendChild(btn);
+    wrap.appendChild(codeEl);
+    wrap.appendChild(copyBtn);
+    wrap.appendChild(status);
+  }
+
   function openSheet(opener) {
     var backdrop = ensureSheet();
     backdrop._opener = opener || document.activeElement;
+    fillCodeWrap();
     backdrop.classList.add("is-open");
     document.body.classList.add("modal-open");
     var dialog = backdrop.querySelector(".install-sheet");
@@ -130,40 +194,13 @@
     btn.addEventListener("click", onInstallClick);
   });
 
-  if (isIos() && !isStandalone() && buttons.length) {
+  if (isStandalone()) {
+    hideButtons();
+    document.documentElement.classList.add("is-standalone");
+    if (document.body) document.body.classList.add("is-standalone");
+  } else if (isIos() && buttons.length) {
     showButtons();
   }
 
-  /* Standalone mobile tab bar */
-  if (isStandalone()) {
-    document.documentElement.classList.add("is-standalone");
-    document.body.classList.add("is-standalone");
-
-    if (!document.querySelector(".app-tabbar")) {
-      var nav = document.createElement("nav");
-      nav.className = "app-tabbar";
-      nav.setAttribute("aria-label", "App");
-      var path = (window.location.pathname || "").split("/").pop() || "index.html";
-      var hash = window.location.hash || "";
-      function item(href, label, key, icon) {
-        var current = false;
-        if (key === "overview") current = path === "dashboard.html" && hash !== "#settings";
-        if (key === "business") current = path === "business.html";
-        if (key === "settings") current = path === "dashboard.html" && hash === "#settings";
-        return (
-          '<a href="' + href + '"' + (current ? ' aria-current="page"' : "") + ">" +
-            icon + "<span>" + label + "</span>" +
-          "</a>"
-        );
-      }
-      var overviewIcon = '<svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="7" height="7" rx="1.5"/><rect x="13" y="4" width="7" height="7" rx="1.5"/><rect x="4" y="13" width="7" height="7" rx="1.5"/><rect x="13" y="13" width="7" height="7" rx="1.5"/></svg>';
-      var businessIcon = '<svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19V9l8-5 8 5v10"/><path d="M9 19v-6h6v6"/></svg>';
-      var settingsIcon = '<svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 5V3M12 21v-2M5 12H3M21 12h-2M6.6 6.6 5.2 5.2M18.8 18.8l-1.4-1.4M6.6 17.4 5.2 18.8M18.8 5.2l-1.4 1.4"/></svg>';
-      nav.innerHTML =
-        item("dashboard.html", "Overview", "overview", overviewIcon) +
-        item("business.html", "Business", "business", businessIcon) +
-        item("dashboard.html#settings", "Settings", "settings", settingsIcon);
-      document.body.appendChild(nav);
-    }
-  }
+  window.AOInstall = { openSheet: openSheet, isStandalone: isStandalone, isIos: isIos };
 })();

@@ -1,8 +1,8 @@
 {
   "name": "AO Intelligence",
   "short_name": "AO",
-  "description": "A managed AI agent for your business: a daily overview of inboxes, sales, and money in.",
-  "start_url": "./dashboard.html",
+  "description": "An AI agent for your business: a daily overview of inboxes, sales, and money in.",
+  "start_url": "./app.html",
   "scope": "./",
   "display": "standalone",
   "orientation": "portrait-primary",

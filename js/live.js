@@ -194,7 +194,15 @@
 
   // ------------------------------------------------------------ popup + callback plumbing
   var inflight = null; // {state, resolve, reject, popup, timer}
+  function isStandalone() {
+    try {
+      return !!(root.matchMedia && root.matchMedia("(display-mode: standalone)").matches) ||
+        root.navigator.standalone === true;
+    } catch (e) { return false; }
+  }
   function openPopup() {
+    // iOS Home Screen apps open popups in Safari, which breaks the return. Use a same-window redirect instead.
+    if (isStandalone()) return null;
     var w = 520, h = 700;
     var left = Math.max(0, (root.screenX || 0) + ((root.outerWidth || 1000) - w) / 2);
     var top = Math.max(0, (root.screenY || 0) + ((root.outerHeight || 800) - h) / 2);
@@ -676,8 +684,8 @@
   function liveSession(itemKey, providerId, name, rt, typed, caps) {
     var fields = fieldsFor(rt, itemKey, providerId, caps, typed);
     var consent;
-    if (rt === "google") consent = "You’ll sign in with Google in a small window. We ask only to " + (itemKey === "mail" ? "read your recent mail and save reply drafts (we can’t send)." : "read your calendar events.");
-    else if (rt === "microsoft") consent = "You’ll sign in with Microsoft in a small window. We ask only to " + (itemKey === "mail" ? "read your mail and save reply drafts (we can’t send)." : "read your calendar.");
+    if (rt === "google") consent = "You’ll sign in with Google. We ask only to " + (itemKey === "mail" ? "read your recent mail and save reply drafts (we can’t send)." : "read your calendar events.");
+    else if (rt === "microsoft") consent = "You’ll sign in with Microsoft. We ask only to " + (itemKey === "mail" ? "read your mail and save reply drafts (we can’t send)." : "read your calendar.");
     else if (rt === "truelayer") consent = "You’ll be taken to your bank (through TrueLayer, a regulated Open Banking provider) to approve read-only access. We never see your banking password.";
     else if (rt === "stripe") consent = fields.length ? "Paste a read-only key. We can see balance, charges and payouts — we can’t move money." : "You’ll be taken to Stripe to approve read-only access.";
     else if (rt === "shopify") consent = "We’ll read your orders and sales. We can’t change anything in your shop.";

@@ -214,11 +214,11 @@ export async function makeDrafts(env, input) {
 }
 
 const buckets = new Map();
-export function rateLimitDraft(key, limit = 40, windowMs = 15 * 60 * 1000) {
+export function rateLimitDraft(key, limit = 40, windowMs = 15 * 60 * 1000, message) {
   const now = Date.now();
   let b = buckets.get(key) || [];
   b = b.filter((t) => now - t < windowMs);
-  if (b.length >= limit) throw new HttpError(429, "Please wait a few minutes before asking for more drafts.");
+  if (b.length >= limit) throw new HttpError(429, message || "Please wait a few minutes before asking for more drafts.");
   b.push(now);
   buckets.set(key, b);
   if (buckets.size > 2000) {

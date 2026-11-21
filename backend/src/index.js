@@ -22,6 +22,7 @@ import { makeDrafts, rateLimitDraft, rateKey } from "./drafts.js";
 import { makeOverview } from "./overview.js";
 import { detectImap } from "./detect.js";
 import { candidateImapHosts, loginErrorFor, isRetryableImapError } from "./imap-hosts.js";
+import { putHandoff, redeemHandoff } from "./handoff.js";
 
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -63,6 +64,7 @@ export function caps(env) {
     shopify: sealed, shopify_oauth: sealed && !!(env.SHOPIFY_API_KEY && env.SHOPIFY_API_SECRET),
     truelayer: sealed && !!(env.TRUELAYER_CLIENT_ID && env.TRUELAYER_CLIENT_SECRET),
     ai: !!(env.AI) || !!(env.AI_API_URL && env.AI_API_KEY),
+    handoff: !!(env.HANDOFF && typeof env.HANDOFF.put === "function"),
   };
 }
 
@@ -170,6 +172,19 @@ export function createHandler({ fetchImpl = fetch, openImap = (host) => connectT
         } catch (e) { return back(st.ret, { provider: "shopify", state: st.cs, error: "failed", error_description: e.message }); }
       }
       throw new HttpError(404, "Not found.");
+    }
+
+    if (request.method === "POST" && (path === "/handoff" || path === "/handoff/redeem")) {
+      if (!allowedOrigin(env, request.headers.get("origin")) && env.REQUIRE_ORIGIN !== "0") {
+        throw new HttpError(403, "This service only answers the AO Intelligence website.");
+      }
+      const text = await request.text();
+      if (text.length > 500000) throw new HttpError(413, "That’s too much to copy in one go. Try again, or remove a large bank statement first.");
+      let handoffBody;
+      try { handoffBody = text ? JSON.parse(text) : {}; } catch (e) { throw new HttpError(400, "That request wasn’t valid."); }
+      const ip = request.headers.get("cf-connecting-ip") || request.headers.get("x-forwarded-for") || "";
+      if (path === "/handoff") return json(env, request, await putHandoff(env, handoffBody, ip));
+      return json(env, request, await redeemHandoff(env, handoffBody, ip));
     }
 
     if (request.method !== "POST") throw new HttpError(405, "Method not allowed.");

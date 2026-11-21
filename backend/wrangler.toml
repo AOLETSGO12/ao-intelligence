@@ -22,3 +22,8 @@ ALLOW_LOCALHOST = "0"
 # Workers AI — used only to write reply drafts. Email text is not stored or logged.
 [ai]
 binding = "AI"
+
+# Short-lived ciphertext for the Safari → Home Screen one-time code. The Worker never sees plaintext.
+[[kv_namespaces]]
+binding = "HANDOFF"
+id = "09133b55a1a54bc7bb5824e54a0ec433"

@@ -2,7 +2,7 @@
    Precaches the site with a versioned cache and serves it offline.
    Paths are relative to the worker’s scope so the cache works under a /repo/ subpath. */
 /* eslint-disable no-restricted-globals */
-var CACHE_VERSION = "ao-intelligence-v14";
+var CACHE_VERSION = "ao-intelligence-v15";
 var ASSETS = [
   "./",
   "./index.html",
@@ -19,17 +19,14 @@ var ASSETS = [
   "./js/live.js",
   "./js/oauth.js",
   "./js/ui.js",
+  "./js/handoff.js",
   "./js/journey.js",
   "./js/app.js",
   "./manifest.webmanifest",
   "./css/styles.css",
   "./js/brand.js",
-  "./js/data.js",
-  "./js/dashboard.js",
   "./js/landing.js",
-  "./js/business-data.js",
   "./js/connectors.js",
-  "./js/business.js",
   "./js/pwa.js",
   "./assets/logo-ao.svg",
   "./assets/logo-ao.png",

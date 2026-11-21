@@ -36,12 +36,10 @@ The backend is described in [backend/README.md](backend/README.md).
 
 ## Live site
 
-The published preview is here (no account needed):
+The published site is here:
 
 - Landing page: https://aoletsgo12.github.io/ao-intelligence/
-- Inbox overview: https://aoletsgo12.github.io/ao-intelligence/dashboard.html
-- Business dashboard: https://aoletsgo12.github.io/ao-intelligence/business.html
-- **Start of the full journey (sign-up → business → connect → dashboard):** https://aoletsgo12.github.io/ao-intelligence/start.html
+- Get started: https://aoletsgo12.github.io/ao-intelligence/start.html
 - Your day (after setup): https://aoletsgo12.github.io/ao-intelligence/app.html
 
 ## How to open it locally
@@ -49,8 +47,7 @@ The published preview is here (no account needed):
 The simplest option is to open the HTML files directly:
 
 1. Open `index.html` in a browser for the marketing page.
-2. Open `dashboard.html` for the inbox overview.
-3. Open `business.html` for the business (sales and money in) dashboard.
+2. Open `start.html` to set up a dashboard, or `app.html` if you already have one.
 
 If you prefer a local web server (useful if a browser blocks JavaScript from `file://` pages, and required for the installable app and offline cache):
 
@@ -59,18 +56,17 @@ cd /path/to/agent-dashboard-site
 python3 -m http.server 8080
 ```
 
-Then visit `http://localhost:8080/`, `http://localhost:8080/dashboard.html`, and `http://localhost:8080/business.html`.
+Then visit `http://localhost:8080/` or `http://localhost:8080/start.html`.
 
 ## Files
 
 - `index.html` — landing and marketing page
-- `dashboard.html` — per-business inbox overview
-- `business.html` — per-business money dashboard (sales, money in, and a daily overview)
+- `start.html` — set up a dashboard
+- `app.html` — the real dashboard (Today, Inbox, Money, Calendar, Settings)
+- `dashboard.html` and `business.html` — short redirects to the real app (kept so old links and Home Screen icons still work)
 - `css/styles.css` — shared styles and colour palette
 - `js/brand.js` — product name and tagline (the place to rename the brand)
-- `js/data.js` — all inbox-dashboard demo data, in a shape a real backend could later replace
-- `js/business-data.js` — all business-dashboard demo data (sales, bank lines, and service status)
-- `js/connectors.js` — adapter layer between the business page and data sources (see below)
+- `js/connectors.js` — adapter layer for connecting email, calendar and money
 - `js/landing.js` — marketing page behaviour (navigation, enquiry form)
 - `js/dashboard.js` — business switcher, overview rendering, mock email-linking modal, settings
 - `js/business.js` — business switcher, KPIs, chart, daily overview template, mock connect modal
@@ -294,8 +290,8 @@ The Snack preview stays on sample data. Adding live sign-in there would take: `e
 
 The site can be installed as a standalone app when it is served over HTTP (for example from the local server above).
 
-- `manifest.webmanifest` names the app **AO Intelligence** (short name **AO**), uses the teal theme colour `#1b5f56`, the site’s warm background, `display: standalone`, and starts at `dashboard.html`.
+- `manifest.webmanifest` names the app **AO Intelligence** (short name **AO**), uses the teal theme colour `#1b5f56`, the site’s warm background, `display: standalone`, and starts at `app.html`.
 - App icons live in `assets/` (`icon-192.png`, `icon-512.png`, `icon-512-maskable.png`, `apple-touch-icon.png`).
-- `sw.js` precaches the pages and assets into a versioned cache (`ao-intelligence-v5` at the time of writing) so a later visit can work offline. Bump that version string when you change cached files.
+- `sw.js` precaches the pages and assets into a versioned cache (`ao-intelligence-v15` at the time of writing) so a later visit can work offline. Bump that version string when you change cached files.
 - An **Install app** button appears in the header when the browser can install the app (Chrome/Android). On iPhone and iPad Safari, the same button opens a short sheet explaining Share → Add to Home Screen.
-- In standalone mode on a small screen, a bottom tab bar links Overview, Business, and Settings.
+- The Home Screen app is the same as the Safari app. On iPhone, use **Use on Home Screen** in Settings to create a one-time code, then enter it in the Home Screen app.

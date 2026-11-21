@@ -231,6 +231,45 @@
     });
   }
 
+
+  function exportAll() {
+    var meta = readMeta();
+    var dashes = {};
+    (meta.dashboards || []).forEach(function (d) {
+      dashes[d.id] = {
+        state: get(stateKey(d.id)),
+        tokens: get(tokenKey(d.id)),
+        bank: get(bankKey(d.id)),
+        cal: get(calKey(d.id))
+      };
+    });
+    return { v: 1, meta: meta, dashes: dashes };
+  }
+  function importAll(payload) {
+    if (!payload || payload.v !== 1 || !payload.meta || !Array.isArray(payload.meta.dashboards) || !payload.dashes) {
+      throw new Error("That code didn’t contain a complete copy.");
+    }
+    var old = readMeta();
+    (old.dashboards || []).forEach(function (d) { clearDashKeys(d.id); });
+    writeMeta({
+      v: 1,
+      account: payload.meta.account || null,
+      current: payload.meta.current || (payload.meta.dashboards[0] && payload.meta.dashboards[0].id) || null,
+      dashboards: payload.meta.dashboards
+    });
+    Object.keys(payload.dashes).forEach(function (id) {
+      var x = payload.dashes[id] || {};
+      function put(fn, val) {
+        if (val == null || val === "") return;
+        set(fn(id), typeof val === "string" ? val : JSON.stringify(val));
+      }
+      put(stateKey, x.state);
+      put(tokenKey, x.tokens);
+      put(bankKey, x.bank);
+      put(calKey, x.cal);
+    });
+  }
+
   root.AOStore = {
     demo: false,
     h: h, clear: clear, load: load, save: save,
@@ -242,6 +281,7 @@
     bankKey: function (id) { return bankKey(id || currentId()); },
     calKey: function (id) { return calKey(id || currentId()); },
     confirmDeleteDashboard: confirmDeleteDashboard, confirmSignOut: confirmSignOut,
+    exportAll: exportAll, importAll: importAll,
     baseUrl: baseUrl, copyText: copyText, KEY: META_KEY
   };
 })(window);

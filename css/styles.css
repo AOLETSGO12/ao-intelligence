@@ -110,6 +110,7 @@ a:hover {
   background: color-mix(in srgb, var(--bg) 88%, transparent);
   backdrop-filter: blur(12px);
   border-bottom: 1px solid transparent;
+  padding-top: env(safe-area-inset-top);
 }
 
 .site-header.is-scrolled {
@@ -1649,28 +1650,34 @@ td.table-amount {
   height: 1.4rem;
 }
 
-@media (display-mode: standalone) and (max-width: 800px) {
-  .app-tabbar {
-    display: flex;
-  }
+/* The Home Screen app uses the same layout as Safari. The old demo tab bar is gone. */
+.app-tabbar { display: none !important; }
 
-  body.is-standalone {
-    padding-bottom: 5rem;
-  }
-
-  body.is-standalone .site-footer {
-    margin-bottom: 1rem;
-  }
+.handoff-code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 1.15rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  margin: 0.6rem 0 0.4rem;
+  padding: 0.7rem 0.8rem;
+  background: var(--surface-2, #f3f0ea);
+  border-radius: var(--radius-sm, 10px);
+  word-break: break-all;
 }
-
-@media (min-width: 801px) {
-  body.is-standalone .app-tabbar {
-    display: none;
-  }
-
-  body.is-standalone {
-    padding-bottom: 0;
-  }
+.handoff-block { margin: 0 0 1rem; }
+.handoff-block .handoff-code { margin-top: 0.8rem; }
+.handoff-note, .handoff-block p { color: var(--ink-muted); margin: 0.5rem 0 0; }
+.handoff-actions { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; }
+#handoff-code {
+  width: 100%;
+  font: inherit;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  padding: 10px 12px;
+  border: 1.5px solid var(--line-strong, #ccc);
+  border-radius: var(--radius-sm, 10px);
+  margin: 0.5rem 0;
 }
 
 

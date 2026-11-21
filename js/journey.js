@@ -111,12 +111,30 @@
     form.appendChild(field("acc-email", "Email", email));
     if (!REAL) form.appendChild(field("acc-pass", "Password", pass, "Demo only: we don’t keep or send your password."));
     form.appendChild(h("button", { class: "btn btn-primary j-wide", type: "submit" }, REAL ? "Continue" : "Create my account"));
-    setRoot(card(
+    var main = card(
       h("p", { class: "j-eyebrow" }, REAL ? "Step 1 · About you" : "Step 1 · Create your account"),
       h("h1", null, "Let’s get your agent started"),
       h("p", { class: "j-lead" }, "A few quick details, then we’ll set up your first dashboard. It takes about 3 minutes."),
       form,
-      h("p", { class: "j-fine" }, REAL ? "Your name and email are used to personalise the app and sign your reply drafts. They stay on this device — there’s no account or password to remember." : "This is a preview: your details stay on this device and no real account is created.")));
+      h("p", { class: "j-fine" }, REAL ? "Your name and email are used to personalise the app and sign your reply drafts. They stay on this device — there’s no account or password to remember." : "This is a preview: your details stay on this device and no real account is created."));
+    var wrap = h("div");
+    wrap.appendChild(main);
+    if (window.AOHandoff) {
+      var inp = h("input", { type: "text", id: "handoff-code", autocomplete: "off", spellcheck: "false", "aria-label": "Home Screen code", placeholder: "XXXX-XXXX-XXXX-XXXX-XXXX-XXXX" });
+      var rst = h("p", { class: "j-hint" });
+      var goBtn = h("button", { class: "btn btn-secondary j-wide", type: "button" }, "Bring my dashboards");
+      goBtn.addEventListener("click", function () {
+        goBtn.disabled = true; rst.textContent = "Bringing your dashboards across…";
+        window.AOHandoff.redeemCode(inp.value).then(function () { window.location.replace("app.html#today"); }).catch(function (e) {
+          rst.textContent = (e && e.message) || "That didn’t work. Please try again."; goBtn.disabled = false;
+        });
+      });
+      wrap.appendChild(card(
+        h("h2", null, "Already set up in Safari?"),
+        h("p", { class: "j-lead" }, "If you created a code in Settings, type it here to bring your dashboards onto this Home Screen app."),
+        inp, goBtn, rst));
+    }
+    setRoot(wrap);
   }
 
   function stepBusiness() {

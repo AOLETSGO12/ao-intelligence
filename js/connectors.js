@@ -180,7 +180,7 @@
     if (!store) return rejectMissing("listBusinesses");
     return resolve({
       isDemo: true,
-      demoLabel: store.demoLabel || "Demo data",
+      demoLabel: store.demoLabel || "",
       currency: store.currency || "GBP",
       locale: store.locale || "en-GB",
       today: store.today,

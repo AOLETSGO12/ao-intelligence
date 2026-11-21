@@ -895,6 +895,56 @@
     }
     root.appendChild(placesCard);
 
+    var H = window.AOHandoff;
+    var standalone = !!(H && H.isStandalone && H.isStandalone());
+    if (H && !standalone) {
+      var codeP = h("p", { class: "handoff-code", hidden: true });
+      var stMsg = h("p", { class: "muted" });
+      var copy = h("button", { class: "btn btn-ghost btn-small", type: "button", hidden: true }, "Copy code");
+      var make = h("button", { class: "btn btn-primary btn-small", type: "button", on: { click: function () {
+        make.disabled = true; make.textContent = "Creating a code…"; stMsg.textContent = "";
+        H.createCode().then(function (r) {
+          codeP.hidden = false; codeP.textContent = r.code;
+          copy.hidden = false; copy.setAttribute("data-code", r.code);
+          stMsg.textContent = "This code works for 10 minutes and can be used once. Add AO Intelligence to your Home Screen, open it, and type the code there.";
+          make.disabled = false; make.textContent = "Create a new code";
+        }).catch(function (e) {
+          stMsg.textContent = (e && e.message) || "That didn’t work. Please try again.";
+          make.disabled = false; make.textContent = "Create a code";
+        });
+      } } }, "Create a code");
+      copy.addEventListener("click", function () {
+        var c = copy.getAttribute("data-code");
+        if (c) S.copyText(c).then(function () { copy.textContent = "Copied"; });
+      });
+      var home = card("Use on Home Screen");
+      home.appendChild(h("p", { class: "muted" }, "The Home Screen app is the same as this one. On iPhone, Safari keeps its data separately, so you bring your dashboards across with a short code."));
+      home.appendChild(h("div", { class: "handoff-actions" }, make, copy));
+      home.appendChild(codeP);
+      home.appendChild(stMsg);
+      if (window.AOInstall && window.AOInstall.isIos && window.AOInstall.isIos() && window.AOInstall.openSheet) {
+        home.appendChild(h("button", { class: "btn btn-secondary btn-small", type: "button", on: { click: function (ev) { window.AOInstall.openSheet(ev.currentTarget); } } }, "How to add it"));
+      }
+      root.appendChild(home);
+    }
+    if (H) {
+      var inp = h("input", { type: "text", id: "handoff-code", autocomplete: "off", spellcheck: "false", "aria-label": "Home Screen code", placeholder: "XXXX-XXXX-XXXX-XXXX-XXXX-XXXX" });
+      var rst = h("p", { class: "muted" });
+      var goBtn = h("button", { class: "btn btn-secondary btn-small", type: "button" }, "Bring my dashboards");
+      goBtn.addEventListener("click", function () {
+        goBtn.disabled = true; rst.textContent = "Bringing your dashboards across…";
+        H.redeemCode(inp.value).then(function () { window.location.replace("app.html#today"); }).catch(function (e) {
+          rst.textContent = (e && e.message) || "That didn’t work. Please try again."; goBtn.disabled = false;
+        });
+      });
+      var rec = card("Already set up in Safari?");
+      rec.appendChild(h("p", { class: "muted" }, "If you created a code in Safari, type it here to bring your dashboards onto this device. If this device already has dashboards, they will be replaced."));
+      rec.appendChild(inp);
+      rec.appendChild(goBtn);
+      rec.appendChild(rst);
+      root.appendChild(rec);
+    }
+
     root.appendChild(card("This dashboard", null,
       h("p", { class: "muted" }, "Removing it deletes its connections, tasks, targets, places and uploads from this device. Your other dashboards stay as they are."),
       h("button", { class: "btn btn-secondary btn-small", type: "button", on: { click: function () {
